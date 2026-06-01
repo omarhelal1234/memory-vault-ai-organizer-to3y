@@ -1,30 +1,51 @@
 import React from 'react';
-import { StatusBar } from 'expo-status-bar';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { NavigationContainer } from '@react-navigation/native';
-import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { createStackNavigator } from '@react-navigation/stack';
+import HomeScreen from './src/screens/HomeScreen';
+import CategoryScreen from './src/screens/CategoryScreen';
+import MemoryDetailScreen from './src/screens/MemoryDetailScreen';
+import SearchScreen from './src/screens/SearchScreen';
 
-// TODO: Import screens once implemented
-// import { HomeScreen } from './src/screens/HomeScreen';
-// import { CategoryScreen } from './src/screens/CategoryScreen';
-// import { MemoryDetailScreen } from './src/screens/MemoryDetailScreen';
-// import { SearchScreen } from './src/screens/SearchScreen';
+const Stack = createStackNavigator();
 
-const Stack = createNativeStackNavigator();
-
-export default function App() {
+const App = () => {
   return (
-    <SafeAreaProvider>
-      <NavigationContainer>
-        <StatusBar style="auto" />
-        <Stack.Navigator initialRouteName="Home">
-          {/* TODO: Add screens once implemented */}
-          {/* <Stack.Screen name="Home" component={HomeScreen} /> */}
-          {/* <Stack.Screen name="Category" component={CategoryScreen} /> */}
-          {/* <Stack.Screen name="MemoryDetail" component={MemoryDetailScreen} /> */}
-          {/* <Stack.Screen name="Search" component={SearchScreen} /> */}
-        </Stack.Navigator>
-      </NavigationContainer>
-    </SafeAreaProvider>
+    <NavigationContainer>
+      <Stack.Navigator
+        initialRouteName="Home"
+        screenOptions={{
+          headerStyle: {
+            backgroundColor: '#6366F1',
+          },
+          headerTintColor: '#fff',
+          headerTitleStyle: {
+            fontWeight: 'bold',
+          },
+        }}
+      >
+        <Stack.Screen 
+          name="Home" 
+          component={HomeScreen}
+          options={{ title: 'Memory Vault' }}
+        />
+        <Stack.Screen 
+          name="Categories" 
+          component={CategoryScreen}
+          options={{ title: 'Categories' }}
+        />
+        <Stack.Screen 
+          name="MemoryDetail" 
+          component={MemoryDetailScreen}
+          options={{ title: 'Memory Details' }}
+        />
+        <Stack.Screen 
+          name="Search" 
+          component={SearchScreen}
+          options={{ title: 'Search Memories' }}
+        />
+      </Stack.Navigator>
+    </NavigationContainer>
   );
-}
+};
+
+export default App;

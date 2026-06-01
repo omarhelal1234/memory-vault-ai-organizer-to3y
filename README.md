@@ -1,75 +1,173 @@
 # Memory Vault - AI-Powered Life Organizer
 
-> Automatically organize your life's memories with AI-powered categorization. Capture screenshots, voice memos, videos, and notes—Memory Vault uses OpenAI's GPT-4 Vision and Whisper APIs to intelligently sort everything into smart collections like 'Movies to Watch', 'GitHub Repos', and 'AI News'.
+> **⚠️ PROJECT STATUS: SPECIFICATION PHASE**  
+> This repository contains the complete technical specification and architecture for Memory Vault. Implementation is required before deployment.
 
-[![React Native](https://img.shields.io/badge/React%20Native-0.73-blue.svg)](https://reactnative.dev/)
-[![Expo](https://img.shields.io/badge/Expo-50-black.svg)](https://expo.dev/)
-[![Supabase](https://img.shields.io/badge/Supabase-Backend-green.svg)](https://supabase.com/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue.svg)](https://www.typescriptlang.org/)
+## Overview
 
-## ⚠️ Project Status
+Memory Vault is a cross-platform AI memory assistant that automatically categorizes screenshots, voice memos, videos, and notes into smart collections like "Movies to Watch", "GitHub Repos", and "AI News" using OpenAI Vision and Whisper APIs.
 
-**Current Phase**: Specification & Architecture Complete  
-**Implementation Status**: Not Started  
-**Estimated Development Time**: 8-12 weeks for MVP
+**Tech Stack:**
+- **Frontend**: React Native (iOS + Web) with Expo
+- **Backend**: Supabase (Auth, Database, Storage, Edge Functions)
+- **AI**: OpenAI GPT-4 Vision API, OpenAI Whisper API
+- **Language**: TypeScript
+- **Styling**: Tailwind CSS (via NativeWind)
 
-This repository contains complete technical specifications, architecture documentation, and design system for the Memory Vault application. **No implementation code exists yet**—this is a comprehensive blueprint ready for development.
+## Project Status
 
-## 🎯 What Memory Vault Does
+**Current Phase**: Architecture & Specification Complete  
+**Next Phase**: Implementation (Estimated 8-12 weeks)
 
-- **Capture Anywhere**: iOS share extension + in-app capture for screenshots, voice memos, photos, videos, and links
-- **AI Categorization**: Automatic tagging using GPT-4 Vision (images) and Whisper (audio transcription)
-- **Smart Collections**: Auto-generated categories like "Movies to Watch", "GitHub Repos", "Recipes", "Travel Ideas"
-- **Instant Search**: Full-text search across all captured content, transcripts, and extracted text
-- **Cross-Platform**: Native iOS app + responsive web dashboard
-- **Offline-First**: Queue captures offline, sync when connected
+### What Exists
+- ✅ Complete product requirements (see `docs/product_requirements.md`)
+- ✅ System architecture design (see `docs/architecture/`)
+- ✅ Database schema and migrations (see `supabase/migrations/`)
+- ✅ UI/UX design system (see `docs/design_system.md`)
+- ✅ API integration specifications (see `docs/SPEC.md`)
 
-## 🏗️ Architecture Overview
+### What's Required
+- ❌ React Native app implementation
+- ❌ iOS share extension (native code)
+- ❌ Supabase Edge Functions deployment
+- ❌ OpenAI API integration
+- ❌ UI component library
+- ❌ State management (Zustand)
+- ❌ Offline sync logic
+- ❌ End-to-end testing
 
-```
-React Native App (iOS + Web)
-  ↓
-Supabase Backend
-  ├── PostgreSQL Database (memories, categories, tags)
-  ├── Storage (media files with CDN)
-  ├── Auth (user sessions)
-  └── Edge Functions (AI processing pipeline)
-      ↓
-OpenAI APIs
-  ├── GPT-4 Vision (screenshot/photo analysis)
-  └── Whisper (voice memo transcription)
-```
+## Quick Start (Post-Implementation)
 
-## 📋 Prerequisites
+### Prerequisites
+- Node.js 18+
+- npm or yarn
+- Expo CLI (`npm install -g expo-cli`)
+- Supabase account
+- OpenAI API key
+- iOS development environment (Xcode for iOS builds)
 
-Before starting development, you'll need:
-
-- **Node.js** 18+ and npm/yarn
-- **Expo CLI**: `npm install -g expo-cli`
-- **iOS Development**: Xcode 15+ (macOS required for iOS builds)
-- **Supabase Account**: [Create free account](https://supabase.com/)
-- **OpenAI API Key**: [Get API key](https://platform.openai.com/api-keys)
-- **Apple Developer Account**: Required for iOS share extension (native build)
-
-## 🚀 Setup Instructions
-
-### 1. Clone and Install
+### Installation
 
 ```bash
+# Clone repository
 git clone https://github.com/yourusername/memory-vault-ai-organizer.git
 cd memory-vault-ai-organizer
+
+# Install dependencies
 npm install
+
+# Configure environment
+cp .env.example .env
+# Edit .env with your credentials:
+# - SUPABASE_URL
+# - SUPABASE_ANON_KEY
+# - OPENAI_API_KEY
+
+# Run type checking
+npm run type-check
+
+# Start development server
+npm run web          # Web app
+npm run ios          # iOS simulator (macOS only)
+npm run android      # Android emulator
 ```
 
-### 2. Configure Environment Variables
-
-Create `.env` file in project root:
+### Database Setup
 
 ```bash
-cp .env.example .env
+# Install Supabase CLI
+npm install -g supabase
+
+# Link to your Supabase project
+supabase link --project-ref your-project-ref
+
+# Run migrations
+supabase db push
+
+# Deploy Edge Functions
+supabase functions deploy analyze-memory
 ```
 
-Edit `.env` with your credentials:
+## Project Structure
+
+```
+memory-vault-ai-organizer/
+├── src/
+│   ├── screens/              # React Native screens
+│   │   ├── HomeScreen.tsx
+│   │   ├── CategoryScreen.tsx
+│   │   ├── MemoryDetailScreen.tsx
+│   │   └── SearchScreen.tsx
+│   ├── components/           # Reusable UI components
+│   ├── lib/                  # Utilities and clients
+│   │   └── supabase.ts       # Supabase client config
+│   ├── store/                # Zustand state management
+│   ├── types/                # TypeScript type definitions
+│   │   └── index.ts
+│   └── App.tsx               # Root component
+├── supabase/
+│   ├── migrations/           # Database schema migrations
+│   │   └── 20240101000000_initial_schema.sql
+│   └── functions/            # Edge Functions (Deno)
+│       └── analyze-memory/
+│           └── index.ts
+├── docs/
+│   ├── product_requirements.md
+│   ├── design_system.md
+│   ├── architecture/
+│   │   ├── adr/              # Architecture Decision Records
+│   │   └── schema.sql
+│   ├── SPEC.md               # AI processing specification
+│   └── HANDOFF.md            # Implementation handoff notes
+├── .env.example              # Environment template
+├── .gitignore
+├── package.json
+├── tsconfig.json
+└── README.md
+```
+
+## Key Features (Planned)
+
+### 1. Intelligent Capture
+- **iOS Share Extension**: Capture screenshots, photos, links from any app
+- **Voice Memos**: Record and auto-transcribe ideas
+- **Offline Support**: Queue uploads when offline, sync when connected
+
+### 2. AI-Powered Organization
+- **Auto-Categorization**: GPT-4 Vision analyzes screenshots and assigns categories
+- **Smart Tagging**: Extract keywords and entities from images/audio
+- **Confidence Scoring**: Flag low-confidence categorizations for review
+
+### 3. Smart Collections
+- **Pre-built Categories**: Movies to Watch, GitHub Repos, AI News, Recipes, Travel Ideas
+- **Custom Categories**: Create your own collections
+- **Hierarchical Organization**: Subcategories and nested tags
+
+### 4. Powerful Search
+- **Full-Text Search**: Search across extracted text, transcripts, titles
+- **Filter by Category**: Browse specific collections
+- **Date Range**: Find memories from specific time periods
+
+## Architecture Highlights
+
+### Offline-First Design
+- Optimistic UI updates (instant feedback)
+- Background sync with retry logic
+- AsyncStorage queue for failed uploads
+
+### Async AI Processing
+- Upload completes immediately (no waiting for AI)
+- Background job queue processes memories
+- Real-time status updates via Supabase Realtime
+
+### Cost Optimization
+- Batch processing for efficiency
+- Smart caching of AI results
+- Incremental processing (only new content)
+
+## Environment Variables
+
+Create a `.env` file with:
 
 ```env
 # Supabase Configuration
@@ -78,245 +176,147 @@ SUPABASE_ANON_KEY=your-anon-key-here
 
 # OpenAI Configuration
 OPENAI_API_KEY=sk-your-openai-key-here
-
-# Optional: Environment
-NODE_ENV=development
 ```
 
-### 3. Set Up Supabase Backend
+**Security Notes:**
+- Never commit `.env` to version control
+- Use Supabase Row Level Security (RLS) for data protection
+- Rotate API keys regularly
+- Use environment-specific keys (dev/staging/prod)
 
-#### Create Supabase Project
-
-1. Go to [Supabase Dashboard](https://app.supabase.com/)
-2. Click "New Project"
-3. Copy your project URL and anon key to `.env`
-
-#### Run Database Migrations
-
-```bash
-# Install Supabase CLI
-npm install -g supabase
-
-# Link to your project
-supabase link --project-ref your-project-ref
-
-# Run migrations
-supabase db push
-```
-
-#### Deploy Edge Functions
-
-```bash
-# Deploy AI processing function
-supabase functions deploy analyze-memory
-
-# Set environment secrets
-supabase secrets set OPENAI_API_KEY=sk-your-key-here
-```
-
-#### Configure Storage Buckets
-
-```bash
-# Create storage bucket for media files
-supabase storage create memories --public
-
-# Set CORS policy (see docs/setup-guide.md for details)
-```
-
-### 4. Start Development Server
-
-```bash
-# Start Expo development server
-npm start
-
-# Run on iOS simulator
-npm run ios
-
-# Run web version
-npm run web
-```
-
-### 5. Build iOS Share Extension (Native Build Required)
-
-**Note**: Share extension requires ejecting from Expo Go to bare workflow.
-
-```bash
-# Eject to bare React Native
-expro eject
-
-# Open iOS project in Xcode
-open ios/MemoryVault.xcworkspace
-
-# Follow docs/ios-share-extension-setup.md for detailed steps
-```
-
-## 📱 Development Workflow
-
-### iOS Development
-
-```bash
-# Run on physical device (requires Apple Developer account)
-npm run ios -- --device "Your iPhone"
-
-# Run on simulator
-npm run ios
-
-# Build for TestFlight
-eas build --platform ios --profile preview
-```
-
-### Web Development
-
-```bash
-# Start web dev server
-npm run web
-
-# Build for production
-npm run build:web
-
-# Deploy to Vercel/Netlify
-npm run deploy:web
-```
-
-### Testing
-
-```bash
-# Run unit tests
-npm test
-
-# Run integration tests (requires test Supabase project)
-npm run test:integration
-
-# Run E2E tests
-npm run test:e2e
-```
-
-## 📚 Documentation
-
-- **[Setup Guide](docs/setup-guide.md)**: Detailed environment setup
-- **[Architecture](docs/architecture.md)**: System design and data flows
-- **[API Documentation](docs/api-documentation.md)**: Supabase and OpenAI integration
-- **[User Guide](docs/user-guide.md)**: Feature documentation
-- **[iOS Share Extension Setup](docs/ios-share-extension-setup.md)**: Native iOS configuration
-- **[Deployment Guide](docs/deployment-guide.md)**: Production deployment steps
-
-## 🎨 Design System
-
-Complete design specifications available in:
-
-- `docs/design_system.md` - Colors, typography, spacing
-- `src/styles/design-system.css` - CSS variables and utilities
-- `docs/component-library.md` - UI component specifications
-
-## 🔑 Key Features to Implement
+## Development Roadmap
 
 ### Phase 1: MVP (Weeks 1-6)
-- [ ] React Native app structure with Expo
-- [ ] Supabase authentication
+- [ ] React Native app shell with navigation
+- [ ] Supabase auth integration
 - [ ] Basic iOS share extension (text only)
 - [ ] OpenAI GPT-4 text categorization
-- [ ] Web interface for viewing memories
+- [ ] Simple web interface for viewing memories
 - [ ] TestFlight deployment
 
 ### Phase 2: Enhanced Features (Weeks 7-12)
-- [ ] GPT-4 Vision for image analysis
-- [ ] Whisper API for audio transcription
-- [ ] Custom categorization rules
+- [ ] Image analysis with GPT-4 Vision
+- [ ] Audio transcription with Whisper
+- [ ] Advanced categorization rules
+- [ ] UI/UX improvements
 - [ ] Storage quota management
 - [ ] Comprehensive error handling
-- [ ] UI/UX refinements
 
 ### Phase 3: Production Hardening (Weeks 13-16)
-- [ ] Integration testing suite
+- [ ] Integration testing
 - [ ] Performance optimization
 - [ ] Security audit
 - [ ] Edge case handling
-- [ ] Production deployment
+- [ ] Production deployment prep
+- [ ] User acceptance testing
+
+### Phase 4: Launch (Weeks 17-20)
+- [ ] Beta testing program
+- [ ] Bug fixes and refinements
+- [ ] App Store submission
+- [ ] Web deployment (Vercel/Netlify)
 - [ ] Monitoring and analytics
+- [ ] Post-launch support
 
-## 🧪 Testing Strategy
+## Testing Strategy
 
-See `docs/testing-strategy.md` for comprehensive testing approach:
+### Unit Tests
+- AI processing functions
+- Category assignment logic
+- Supabase client utilities
 
-- Unit tests for business logic
-- Integration tests for API interactions
-- E2E tests for critical user flows
-- Manual testing checklist for iOS share extension
-- Performance benchmarks for AI processing
+### Integration Tests
+- OpenAI API interactions
+- Supabase database operations
+- Storage upload/download flows
 
-## 🚢 Deployment
+### E2E Tests
+- iOS share extension flow
+- Web search and retrieval
+- Offline sync scenarios
 
-### iOS App Store
+### Performance Tests
+- Upload speed (target: <2s for 1MB image)
+- Search latency (target: <500ms)
+- AI processing time (target: <10s for vision, <30s for audio)
 
+## Deployment
+
+### iOS App
 ```bash
-# Build production iOS app
-eas build --platform ios --profile production
+# Build for TestFlight
+eas build --platform ios --profile preview
 
 # Submit to App Store
 eas submit --platform ios
 ```
 
-### Web Deployment (Vercel)
-
+### Web App
 ```bash
-# Install Vercel CLI
-npm install -g vercel
+# Build for production
+npm run build:web
 
-# Deploy
+# Deploy to Vercel
 vercel --prod
+
+# Or deploy to Netlify
+netlify deploy --prod
 ```
 
-See `docs/deployment-guide.md` for detailed instructions.
+### Supabase Edge Functions
+```bash
+# Deploy all functions
+supabase functions deploy
 
-## 💰 Cost Estimates
+# Deploy specific function
+supabase functions deploy analyze-memory
+```
 
-### OpenAI API Costs (Monthly)
-- **GPT-4 Vision**: ~$0.01-0.03 per image analysis
-- **Whisper**: ~$0.006 per minute of audio
-- **Estimated for 100 users**: $50-150/month
+## Cost Estimates
 
-### Supabase Costs
-- **Free Tier**: 500MB database, 1GB storage, 2GB bandwidth
-- **Pro Tier ($25/month)**: 8GB database, 100GB storage, 250GB bandwidth
+### OpenAI API (per 1,000 users/month)
+- GPT-4 Vision: ~$50-100 (assuming 10 images/user/month)
+- Whisper: ~$20-40 (assuming 5 voice memos/user/month)
 
-### Infrastructure Total
-- **MVP**: $0-50/month (free tiers)
-- **Production (1000 users)**: $200-500/month
+### Supabase (per 1,000 users/month)
+- Pro Plan: $25/month (includes 8GB database, 100GB bandwidth)
+- Storage: ~$10/month (assuming 500MB/user average)
 
-## 🤝 Contributing
+### Total Estimated Cost: ~$105-175/month for 1,000 active users
 
-This project is currently in specification phase. Once implementation begins:
+## Contributing
 
-1. Fork the repository
-2. Create feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
-5. Open Pull Request
+This project is currently in specification phase. Contributions will be welcomed once implementation begins.
 
-See `CONTRIBUTING.md` for detailed guidelines.
+### Planned Contribution Areas
+- React Native component development
+- AI prompt engineering
+- UI/UX improvements
+- Documentation
+- Testing
 
-## 📄 License
+## License
 
-MIT License - see `LICENSE` file for details.
+MIT License - See LICENSE file for details
 
-## 🙏 Acknowledgments
+## Support
 
-- **OpenAI** for GPT-4 Vision and Whisper APIs
-- **Supabase** for backend infrastructure
-- **Expo** for React Native development platform
-- **React Native Community** for cross-platform mobile development
+For questions or issues:
+- 📧 Email: support@memoryvault.app (placeholder)
+- 📖 Documentation: See `docs/` directory
+- 🐛 Bug Reports: GitHub Issues (when repository is public)
 
-## 📞 Support
+## Acknowledgments
 
-- **Documentation**: See `docs/` directory
-- **Issues**: [GitHub Issues](https://github.com/yourusername/memory-vault-ai-organizer/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/yourusername/memory-vault-ai-organizer/discussions)
+- **OpenAI**: GPT-4 Vision and Whisper APIs
+- **Supabase**: Backend infrastructure
+- **Expo**: Cross-platform development framework
+- **React Native Community**: Component libraries and tools
 
 ---
 
-**Built with ❤️ using React Native, Supabase, and OpenAI**
-
+**Note**: This project requires significant development effort before deployment. The specification is complete, but implementation is needed. Estimated timeline: 8-12 weeks for MVP, 16-20 weeks for production-ready system.
 
 ---
 
-_Built by [The Agency](https://github.com/msitarzewski/agency-agents) — orchestrator run on 2026-06-01T22:01:45.559Z._
+_Built by [The Agency](https://github.com/msitarzewski/agency-agents) — orchestrator run on 2026-06-01T22:24:49.881Z._

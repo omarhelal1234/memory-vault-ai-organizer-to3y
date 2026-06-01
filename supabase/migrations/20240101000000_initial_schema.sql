@@ -1,154 +1,206 @@
+-- Memory Vault Initial Schema
+-- This migration creates the core tables for the Memory Vault application
+
 -- Enable UUID extension
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- Profiles table (extends auth.users)
-CREATE TABLE public.profiles (
+CREATE TABLE profiles (
   id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   email TEXT NOT NULL,
   full_name TEXT,
   avatar_url TEXT,
-  default_view TEXT DEFAULT 'grid' CHECK (default_view IN ('grid', 'list')),
-  theme TEXT DEFAULT 'system' CHECK (theme IN ('light', 'dark', 'system')),
-  storage_used_bytes BIGINT DEFAULT 0,
-  storage_limit_bytes BIGINT DEFAULT 5368709120,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Categories table
-CREATE TABLE public.categories (
+-- Memories table (core entity)
+CREATE TABLE memories (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
-  name TEXT NOT NULL,
-  icon TEXT DEFAULT '📁',
-  color TEXT DEFAULT '#6366f1',
-  is_smart_collection BOOLEAN DEFAULT FALSE,
-  rules JSONB DEFAULT NULL,
-  memory_count INTEGER DEFAULT 0,
+  user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  
+  -- Content
+  type TEXT NOT NULL CHECK (type IN ('screenshot', 'voice_memo', 'photo', 'video', 'link', 'note')),
+  storage_path TEXT,
+  content_text TEXT,
+  url TEXT,
+  
+  -- AI Analysis
+  processing_status TEXT DEFAULT 'pending' CHECK (processing_status IN ('pending', 'processing', 'completed', 'failed')),
+  ai_metadata JSONB,
+  
+  -- User Overrides
+  title TEXT,
+  notes TEXT,
+  
+  -- Timestamps
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE(user_id, name)
+  captured_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Categories table
+CREATE TABLE categories (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  icon TEXT,
+  color TEXT,
+  parent_id UUID REFERENCES categories(id) ON DELETE CASCADE,
+  sort_order INTEGER DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- Tags table
-CREATE TABLE public.tags (
+CREATE TABLE tags (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
-  usage_count INTEGER DEFAULT 0,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE(user_id, name)
-);
-
--- Memories table
-CREATE TABLE public.memories (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
-  type TEXT NOT NULL CHECK (type IN ('screenshot', 'voice_memo', 'photo', 'video', 'link')),
-  title TEXT,
-  description TEXT,
-  media_url TEXT,
-  thumbnail_url TEXT,
-  processing_status TEXT DEFAULT 'pending' CHECK (processing_status IN ('pending', 'processing', 'completed', 'failed')),
-  processing_error TEXT,
-  captured_at TIMESTAMPTZ DEFAULT NOW(),
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW(),
-  sync_status TEXT DEFAULT 'synced' CHECK (sync_status IN ('synced', 'pending', 'conflict')),
-  local_id UUID
-);
-
--- AI Analysis table
-CREATE TABLE public.ai_analyses (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  memory_id UUID NOT NULL REFERENCES public.memories(id) ON DELETE CASCADE,
-  detected_objects TEXT[],
-  detected_text TEXT,
-  scene_description TEXT,
-  transcription TEXT,
-  extracted_entities JSONB,
-  suggested_categories JSONB,
-  suggested_tags TEXT[],
-  confidence DECIMAL(3,2),
-  processing_time_ms INTEGER,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- Memory-Category junction table
-CREATE TABLE public.memory_categories (
-  memory_id UUID REFERENCES public.memories(id) ON DELETE CASCADE,
-  category_id UUID REFERENCES public.categories(id) ON DELETE CASCADE,
-  assigned_at TIMESTAMPTZ DEFAULT NOW(),
+CREATE TABLE memory_categories (
+  memory_id UUID NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+  category_id UUID NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
   PRIMARY KEY (memory_id, category_id)
 );
 
 -- Memory-Tag junction table
-CREATE TABLE public.memory_tags (
-  memory_id UUID REFERENCES public.memories(id) ON DELETE CASCADE,
-  tag_id UUID REFERENCES public.tags(id) ON DELETE CASCADE,
-  assigned_at TIMESTAMPTZ DEFAULT NOW(),
+CREATE TABLE memory_tags (
+  memory_id UUID NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+  tag_id UUID NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
   PRIMARY KEY (memory_id, tag_id)
 );
 
--- Indexes
-CREATE INDEX idx_memories_user_id ON public.memories(user_id);
-CREATE INDEX idx_memories_type ON public.memories(type);
-CREATE INDEX idx_memories_processing_status ON public.memories(processing_status);
-CREATE INDEX idx_memories_captured_at ON public.memories(captured_at DESC);
-CREATE INDEX idx_categories_user_id ON public.categories(user_id);
-CREATE INDEX idx_tags_user_id ON public.tags(user_id);
-CREATE INDEX idx_ai_analyses_memory_id ON public.ai_analyses(memory_id);
-
--- Row Level Security
-ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.categories ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.tags ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.memories ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.ai_analyses ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.memory_categories ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.memory_tags ENABLE ROW LEVEL SECURITY;
-
--- RLS Policies
-CREATE POLICY "Users can view own profile" ON public.profiles FOR SELECT USING (auth.uid() = id);
-CREATE POLICY "Users can update own profile" ON public.profiles FOR UPDATE USING (auth.uid() = id);
-
-CREATE POLICY "Users can manage own categories" ON public.categories FOR ALL USING (auth.uid() = user_id);
-CREATE POLICY "Users can manage own tags" ON public.tags FOR ALL USING (auth.uid() = user_id);
-CREATE POLICY "Users can manage own memories" ON public.memories FOR ALL USING (auth.uid() = user_id);
-
-CREATE POLICY "Users can view own AI analyses" ON public.ai_analyses FOR SELECT USING (
-  EXISTS (SELECT 1 FROM public.memories WHERE memories.id = ai_analyses.memory_id AND memories.user_id = auth.uid())
+-- User preferences table
+CREATE TABLE user_preferences (
+  user_id UUID PRIMARY KEY REFERENCES profiles(id) ON DELETE CASCADE,
+  preferences JSONB NOT NULL DEFAULT '{}'
 );
 
-CREATE POLICY "Users can manage own memory categories" ON public.memory_categories FOR ALL USING (
-  EXISTS (SELECT 1 FROM public.memories WHERE memories.id = memory_categories.memory_id AND memories.user_id = auth.uid())
-);
+-- Indexes for performance
+CREATE INDEX memories_user_id_idx ON memories(user_id);
+CREATE INDEX memories_processing_status_idx ON memories(processing_status) WHERE processing_status = 'pending';
+CREATE INDEX memories_content_text_idx ON memories USING GIN (to_tsvector('english', content_text));
+CREATE INDEX categories_user_id_idx ON categories(user_id);
+CREATE INDEX tags_user_id_idx ON tags(user_id);
+CREATE UNIQUE INDEX categories_user_name_idx ON categories(user_id, name);
+CREATE UNIQUE INDEX tags_user_name_idx ON tags(user_id, name);
 
-CREATE POLICY "Users can manage own memory tags" ON public.memory_tags FOR ALL USING (
-  EXISTS (SELECT 1 FROM public.memories WHERE memories.id = memory_tags.memory_id AND memories.user_id = auth.uid())
-);
+-- Row Level Security (RLS) policies
+ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE memories ENABLE ROW LEVEL SECURITY;
+ALTER TABLE categories ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tags ENABLE ROW LEVEL SECURITY;
+ALTER TABLE memory_categories ENABLE ROW LEVEL SECURITY;
+ALTER TABLE memory_tags ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_preferences ENABLE ROW LEVEL SECURITY;
 
--- Functions
-CREATE OR REPLACE FUNCTION public.handle_new_user()
-RETURNS TRIGGER AS $$
-BEGIN
-  INSERT INTO public.profiles (id, email, full_name, avatar_url)
-  VALUES (
-    NEW.id,
-    NEW.email,
-    NEW.raw_user_meta_data->>'full_name',
-    NEW.raw_user_meta_data->>'avatar_url'
+-- Profiles policies
+CREATE POLICY "Users can view own profile" ON profiles
+  FOR SELECT USING (auth.uid() = id);
+
+CREATE POLICY "Users can update own profile" ON profiles
+  FOR UPDATE USING (auth.uid() = id);
+
+-- Memories policies
+CREATE POLICY "Users can view own memories" ON memories
+  FOR SELECT USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can insert own memories" ON memories
+  FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can update own memories" ON memories
+  FOR UPDATE USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can delete own memories" ON memories
+  FOR DELETE USING (auth.uid() = user_id);
+
+-- Categories policies
+CREATE POLICY "Users can view own categories" ON categories
+  FOR SELECT USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can insert own categories" ON categories
+  FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can update own categories" ON categories
+  FOR UPDATE USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can delete own categories" ON categories
+  FOR DELETE USING (auth.uid() = user_id);
+
+-- Tags policies
+CREATE POLICY "Users can view own tags" ON tags
+  FOR SELECT USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can insert own tags" ON tags
+  FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can update own tags" ON tags
+  FOR UPDATE USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can delete own tags" ON tags
+  FOR DELETE USING (auth.uid() = user_id);
+
+-- Memory-Category junction policies
+CREATE POLICY "Users can view own memory categories" ON memory_categories
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM memories WHERE memories.id = memory_categories.memory_id AND memories.user_id = auth.uid()
+    )
   );
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
 
-CREATE TRIGGER on_auth_user_created
-  AFTER INSERT ON auth.users
-  FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+CREATE POLICY "Users can insert own memory categories" ON memory_categories
+  FOR INSERT WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM memories WHERE memories.id = memory_categories.memory_id AND memories.user_id = auth.uid()
+    )
+  );
 
--- Update timestamps trigger
-CREATE OR REPLACE FUNCTION public.update_updated_at()
+CREATE POLICY "Users can delete own memory categories" ON memory_categories
+  FOR DELETE USING (
+    EXISTS (
+      SELECT 1 FROM memories WHERE memories.id = memory_categories.memory_id AND memories.user_id = auth.uid()
+    )
+  );
+
+-- Memory-Tag junction policies
+CREATE POLICY "Users can view own memory tags" ON memory_tags
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM memories WHERE memories.id = memory_tags.memory_id AND memories.user_id = auth.uid()
+    )
+  );
+
+CREATE POLICY "Users can insert own memory tags" ON memory_tags
+  FOR INSERT WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM memories WHERE memories.id = memory_tags.memory_id AND memories.user_id = auth.uid()
+    )
+  );
+
+CREATE POLICY "Users can delete own memory tags" ON memory_tags
+  FOR DELETE USING (
+    EXISTS (
+      SELECT 1 FROM memories WHERE memories.id = memory_tags.memory_id AND memories.user_id = auth.uid()
+    )
+  );
+
+-- User preferences policies
+CREATE POLICY "Users can view own preferences" ON user_preferences
+  FOR SELECT USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can insert own preferences" ON user_preferences
+  FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can update own preferences" ON user_preferences
+  FOR UPDATE USING (auth.uid() = user_id);
+
+-- Function to update updated_at timestamp
+CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
 BEGIN
   NEW.updated_at = NOW();
@@ -156,11 +208,24 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER update_profiles_updated_at BEFORE UPDATE ON public.profiles
-  FOR EACH ROW EXECUTE FUNCTION public.update_updated_at();
+-- Triggers for updated_at
+CREATE TRIGGER update_profiles_updated_at BEFORE UPDATE ON profiles
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
-CREATE TRIGGER update_categories_updated_at BEFORE UPDATE ON public.categories
-  FOR EACH ROW EXECUTE FUNCTION public.update_updated_at();
+CREATE TRIGGER update_memories_updated_at BEFORE UPDATE ON memories
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
-CREATE TRIGGER update_memories_updated_at BEFORE UPDATE ON public.memories
-  FOR EACH ROW EXECUTE FUNCTION public.update_updated_at();
+-- Function to create profile on user signup
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO public.profiles (id, email, full_name)
+  VALUES (NEW.id, NEW.email, NEW.raw_user_meta_data->>'full_name');
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Trigger to create profile on signup
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();

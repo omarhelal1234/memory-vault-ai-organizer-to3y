@@ -16,23 +16,16 @@ web-build/
 *.p12
 *.key
 *.mobileprovision
-*.orig.*
-ios/Pods/
-ios/build/
-android/app/build/
-android/.gradle/
+*.ipa
+*.apk
 
 # Environment
 .env
 .env.local
 .env.*.local
 
-# Testing
-coverage/
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
+# macOS
+.DS_Store
 
 # IDE
 .vscode/
@@ -40,14 +33,21 @@ yarn-error.log*
 *.swp
 *.swo
 *~
-.DS_Store
 
-# Supabase
-.supabase/
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Testing
+coverage/
+.nyc_output/
 
 # Build
 build/
-*.tgz
+*.tsbuildinfo
 
 # Temporary
 tmp/
