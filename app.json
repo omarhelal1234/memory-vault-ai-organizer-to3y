@@ -21,6 +21,9 @@
     },
     "web": {
       "bundler": "metro"
+    },
+    "experiments": {
+      "baseUrl": "/memory-vault-ai-organizer-to3y"
     }
   }
 }
