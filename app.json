@@ -1,0 +1,26 @@
+{
+  "expo": {
+    "name": "Memory Vault",
+    "slug": "memory-vault-ai-organizer",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "scheme": "memoryvault",
+    "newArchEnabled": false,
+    "splash": {
+      "resizeMode": "contain",
+      "backgroundColor": "#6366F1"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.memoryvault.app"
+    },
+    "android": {
+      "package": "com.memoryvault.app"
+    },
+    "web": {
+      "bundler": "metro"
+    }
+  }
+}
