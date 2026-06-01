@@ -1,24 +1,88 @@
-import React from 'react';
-import { View, Text, StyleSheet, ScrollView } from 'react-native';
+import React, { useCallback, useEffect, useState } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  ActivityIndicator,
+  RefreshControl,
+} from 'react-native';
+import { listMemories, categoriesOf } from '../lib/api';
+
+// Visual config for the known smart collections; anything else falls under "Other".
+const KNOWN: { name: string; icon: string; color: string }[] = [
+  { name: 'Movies to Watch', icon: '🎬', color: '#EC4899' },
+  { name: 'GitHub Repos', icon: '💻', color: '#8B5CF6' },
+  { name: 'AI News', icon: '🤖', color: '#3B82F6' },
+  { name: 'Recipes', icon: '🍳', color: '#F59E0B' },
+  { name: 'Travel Ideas', icon: '✈️', color: '#06B6D4' },
+  { name: 'Shopping', icon: '🛍️', color: '#10B981' },
+  { name: 'Other', icon: '📦', color: '#6B7280' },
+];
 
 const CategoryScreen = () => {
-  const categories = [
-    { name: 'Movies to Watch', icon: '🎬', color: '#EC4899', count: 0 },
-    { name: 'GitHub Repos', icon: '💻', color: '#8B5CF6', count: 0 },
-    { name: 'AI News', icon: '🤖', color: '#3B82F6', count: 0 },
-    { name: 'Recipes', icon: '🍳', color: '#F59E0B', count: 0 },
-    { name: 'Travel Ideas', icon: '✈️', color: '#06B6D4', count: 0 },
+  const [counts, setCounts] = useState<Record<string, number>>({});
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const load = useCallback(async () => {
+    const memories = await listMemories();
+    const tally: Record<string, number> = {};
+    for (const m of memories) {
+      for (const c of categoriesOf(m)) {
+        tally[c] = (tally[c] ?? 0) + 1;
+      }
+    }
+    setCounts(tally);
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      try {
+        await load();
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [load]);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await load();
+    setRefreshing(false);
+  }, [load]);
+
+  if (loading) {
+    return (
+      <View style={styles.center}>
+        <ActivityIndicator size="large" color="#6366F1" />
+      </View>
+    );
+  }
+
+  // Show known collections plus any AI-invented categories not in the known list.
+  const extra = Object.keys(counts).filter((c) => !KNOWN.some((k) => k.name === c));
+  const rows = [
+    ...KNOWN,
+    ...extra.map((name) => ({ name, icon: '🏷️', color: '#94A3B8' })),
   ];
 
   return (
-    <ScrollView style={styles.container}>
+    <ScrollView
+      style={styles.container}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+    >
       <View style={styles.grid}>
-        {categories.map((category, index) => (
-          <View key={index} style={[styles.categoryCard, { borderLeftColor: category.color }]}>
+        {rows.map((category) => (
+          <View
+            key={category.name}
+            style={[styles.categoryCard, { borderLeftColor: category.color }]}
+          >
             <Text style={styles.categoryIcon}>{category.icon}</Text>
             <View style={styles.categoryInfo}>
               <Text style={styles.categoryName}>{category.name}</Text>
-              <Text style={styles.categoryCount}>{category.count} items</Text>
+              <Text style={styles.categoryCount}>{counts[category.name] ?? 0} items</Text>
             </View>
           </View>
         ))}
@@ -28,14 +92,9 @@ const CategoryScreen = () => {
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F8F9FA',
-  },
-  grid: {
-    padding: 16,
-    gap: 12,
-  },
+  container: { flex: 1, backgroundColor: '#F8F9FA' },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#F8F9FA' },
+  grid: { padding: 16, gap: 12 },
   categoryCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 12,
@@ -49,23 +108,10 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 2,
   },
-  categoryIcon: {
-    fontSize: 32,
-    marginRight: 16,
-  },
-  categoryInfo: {
-    flex: 1,
-  },
-  categoryName: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#212529',
-    marginBottom: 4,
-  },
-  categoryCount: {
-    fontSize: 14,
-    color: '#6C757D',
-  },
+  categoryIcon: { fontSize: 32, marginRight: 16 },
+  categoryInfo: { flex: 1 },
+  categoryName: { fontSize: 18, fontWeight: '600', color: '#212529', marginBottom: 4 },
+  categoryCount: { fontSize: 14, color: '#6C757D' },
 });
 
 export default CategoryScreen;

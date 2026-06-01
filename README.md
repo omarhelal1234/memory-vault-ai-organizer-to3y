@@ -1,7 +1,9 @@
 # Memory Vault - AI-Powered Life Organizer
 
-> **⚠️ PROJECT STATUS: SPECIFICATION PHASE**  
-> This repository contains the complete technical specification and architecture for Memory Vault. Implementation is required before deployment.
+> **✅ PROJECT STATUS: FUNCTIONAL MVP**
+> A working web app is wired to a live Supabase backend: email/password auth, capture (notes / links / images → Storage), AI auto-categorization, a live memory list, category counts, search, and a detail view.
+>
+> **Run it:** `npm install` → `npm run web` → open http://localhost:8081. Set `OPENAI_API_KEY` as a Supabase Edge Function secret for AI categorization to run, and (for instant testing) disable "Confirm email" in Supabase → Authentication → Providers → Email.
 
 ## Overview
 
