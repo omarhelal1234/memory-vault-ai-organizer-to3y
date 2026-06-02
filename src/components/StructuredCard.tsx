@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Linking } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Linking, Image } from 'react-native';
 import type {
   StructuredData,
   RecipeData,
@@ -9,6 +9,7 @@ import type {
   MovieData,
   TravelData,
   IdeaData,
+  ReelData,
   ExtractedLink,
 } from '../types';
 
@@ -210,6 +211,23 @@ const IdeaCard = ({ d, spark }: { d: IdeaData; spark?: number | null }) => (
   </View>
 );
 
+const ReelCard = ({ d }: { d: ReelData }) => {
+  const thumb = safeUrl(d.thumbnail_url);
+  return (
+    <View>
+      {thumb ? (
+        <Image source={{ uri: thumb }} style={styles.reelThumb} resizeMode="cover" />
+      ) : null}
+      {d.title ? <Text style={styles.cardTitle}>{d.title}</Text> : null}
+      <Meta items={[d.platform && `📱 ${d.platform}`, d.author && `@ ${d.author}`]} />
+      <Field label="What it's about" value={d.summary} />
+      {d.caption ? <Field label="Caption" value={d.caption} /> : null}
+      <Bullets label="Worth doing / learning" items={d.action_items} />
+      <OpenButton label="Watch" url={d.url} />
+    </View>
+  );
+};
+
 export const SparkBar = ({ score }: { score: number }) => {
   const pct = Math.max(0, Math.min(100, score));
   const color = pct >= 70 ? '#F59E0B' : pct >= 40 ? '#6366F1' : '#9CA3AF';
@@ -247,6 +265,7 @@ export const StructuredCard = ({
     case 'movie': body = <MovieCard d={data} />; break;
     case 'travel': body = <TravelCard d={data} />; break;
     case 'idea': body = <IdeaCard d={data} spark={sparkScore} />; break;
+    case 'reel': body = <ReelCard d={data} />; break;
     default: return null;
   }
   return <View style={styles.card}>{body}</View>;
@@ -284,6 +303,7 @@ const styles = StyleSheet.create({
     elevation: 1,
   },
   cardTitle: { fontSize: 20, fontWeight: '800', color: '#111827', marginBottom: 8 },
+  reelThumb: { width: '100%', height: 200, borderRadius: 12, marginBottom: 12, backgroundColor: '#E9ECEF' },
   metaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 4 },
   pill: { backgroundColor: '#EEF2FF', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 },
   pillText: { fontSize: 12, color: '#4F46E5', fontWeight: '600' },

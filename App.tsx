@@ -1,11 +1,13 @@
-import React from 'react';
-import { ActivityIndicator, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import React, { useState } from 'react';
+import { ActivityIndicator, View, Text, TouchableOpacity, StyleSheet, Alert } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { AuthProvider, useAuth } from './src/lib/auth';
+import { reconcileTaxonomy } from './src/lib/api';
 import AuthScreen from './src/screens/AuthScreen';
 import HomeScreen from './src/screens/HomeScreen';
-import CategoryScreen from './src/screens/CategoryScreen';
+import SubcategoryScreen from './src/screens/SubcategoryScreen';
+import ItemListScreen from './src/screens/ItemListScreen';
 import MemoryDetailScreen from './src/screens/MemoryDetailScreen';
 import SearchScreen from './src/screens/SearchScreen';
 import CaptureScreen from './src/screens/CaptureScreen';
@@ -26,6 +28,30 @@ const HeaderLink = ({ label, onPress }: { label: string; onPress: () => void }) 
     <Text style={styles.headerButton}>{label}</Text>
   </TouchableOpacity>
 );
+
+// Triggers the AI auto-merge pass that collapses near-duplicate categories.
+const TidyButton = () => {
+  const [busy, setBusy] = useState(false);
+  const tidy = async () => {
+    if (busy) return;
+    setBusy(true);
+    const res = await reconcileTaxonomy();
+    setBusy(false);
+    Alert.alert(
+      'Auto-organize',
+      res
+        ? res.reconciled > 0
+          ? `Merged ${res.reconciled} duplicate group(s), moved ${res.rowsMoved} item(s). Pull to refresh.`
+          : 'Your categories are already tidy.'
+        : 'Could not reach the organizer. Try again.',
+    );
+  };
+  return busy ? (
+    <ActivityIndicator size="small" color="#fff" />
+  ) : (
+    <HeaderLink label="✨" onPress={tidy} />
+  );
+};
 
 const RootNavigator = () => {
   const { session, loading } = useAuth();
@@ -58,7 +84,7 @@ const RootNavigator = () => {
           title: 'Memory Vault',
           headerLeft: () => (
             <View style={styles.headerRow}>
-              <HeaderLink label="📁" onPress={() => navigation.navigate('Categories')} />
+              <TidyButton />
               <HeaderLink label="🔍" onPress={() => navigation.navigate('Search')} />
             </View>
           ),
@@ -67,10 +93,11 @@ const RootNavigator = () => {
       />
       <Stack.Screen name="Capture" component={CaptureScreen} options={{ title: 'New Memory' }} />
       <Stack.Screen
-        name="Categories"
-        component={CategoryScreen}
-        options={{ title: 'Categories' }}
+        name="Subcategory"
+        component={SubcategoryScreen}
+        options={{ title: 'Category' }}
       />
+      <Stack.Screen name="ItemList" component={ItemListScreen} options={{ title: 'Items' }} />
       <Stack.Screen
         name="MemoryDetail"
         component={MemoryDetailScreen}

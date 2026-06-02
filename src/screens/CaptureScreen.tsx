@@ -19,6 +19,20 @@ import {
 
 type Kind = 'note' | 'link' | 'image';
 
+// Recognize short-video links so we can tell the user it'll be auto-analyzed.
+function detectPlatform(url: string): string | null {
+  try {
+    const host = new URL(url.trim()).hostname.replace(/^www\./, '').toLowerCase();
+    if (host.includes('tiktok.com')) return 'TikTok';
+    if (host.includes('instagram.com')) return 'Instagram';
+    if (host === 'youtube.com' || host === 'm.youtube.com' || host === 'youtu.be')
+      return 'YouTube';
+  } catch {
+    // not a full URL yet
+  }
+  return null;
+}
+
 const CaptureScreen = ({ navigation }: any) => {
   const [kind, setKind] = useState<Kind>('note');
   const [title, setTitle] = useState('');
@@ -76,7 +90,7 @@ const CaptureScreen = ({ navigation }: any) => {
             onPress={() => setKind(k)}
           >
             <Text style={[styles.tabText, kind === k && styles.tabTextActive]}>
-              {k === 'note' ? '📝 Note' : k === 'link' ? '🔗 Link' : '🖼️ Image'}
+              {k === 'note' ? '📝 Note' : k === 'link' ? '🔗 Link / Reel' : '🖼️ Image'}
             </Text>
           </TouchableOpacity>
         ))}
@@ -110,13 +124,18 @@ const CaptureScreen = ({ navigation }: any) => {
           <Text style={styles.label}>URL</Text>
           <TextInput
             style={styles.input}
-            placeholder="https://..."
+            placeholder="Paste a link, TikTok, Reel or YouTube URL"
             value={url}
             onChangeText={setUrl}
             autoCapitalize="none"
             keyboardType="url"
             placeholderTextColor="#ADB5BD"
           />
+          {detectPlatform(url) ? (
+            <Text style={styles.detected}>
+              📱 {detectPlatform(url)} detected — AI will pull the caption, author & thumbnail.
+            </Text>
+          ) : null}
         </>
       )}
 
@@ -192,6 +211,7 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     overflow: 'hidden',
   },
+  detected: { color: '#4F46E5', fontSize: 13, marginTop: -8, marginBottom: 16, fontWeight: '600' },
   imagePickerText: { color: '#ADB5BD', fontSize: 16 },
   preview: { width: '100%', height: '100%' },
   button: {

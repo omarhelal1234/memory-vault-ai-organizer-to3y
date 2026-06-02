@@ -9,7 +9,14 @@ import {
   Linking,
   TouchableOpacity,
 } from 'react-native';
-import { getMemory, getSignedUrl, categoryIcon } from '../lib/api';
+import {
+  getMemory,
+  getSignedUrl,
+  categoryIcon,
+  subcategoryOf,
+  setDone,
+  PRIORITY_META,
+} from '../lib/api';
 import { StructuredCard, ExtractedLinks } from '../components/StructuredCard';
 import type { Memory } from '../types';
 
@@ -68,6 +75,17 @@ const MemoryDetailScreen = ({ route }: any) => {
   const tags = meta?.suggested_tags ?? [];
   const category = memory.category ?? meta?.suggested_categories?.[0] ?? null;
   const hasStructured = !!memory.structured_data?.kind;
+  const prio = memory.priority ? PRIORITY_META[memory.priority] : null;
+
+  const toggleDone = async () => {
+    const next = !memory.done;
+    setMemory({ ...memory, done: next });
+    try {
+      await setDone(memory.id, next);
+    } catch {
+      setMemory({ ...memory, done: !next });
+    }
+  };
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
@@ -76,11 +94,25 @@ const MemoryDetailScreen = ({ route }: any) => {
         <View style={{ flex: 1 }}>
           <Text style={styles.title}>{memory.title || meta?.summary || 'Memory'}</Text>
           <Text style={styles.status}>
-            {category ? `${category} • ` : ''}
+            {category ? `${category} › ${subcategoryOf(memory)} • ` : ''}
             {STATUS_LABEL[memory.processing_status] ?? memory.processing_status}
           </Text>
         </View>
       </View>
+
+      {memory.processing_status === 'completed' ? (
+        <View style={styles.triage}>
+          <TouchableOpacity style={styles.doneToggle} onPress={toggleDone}>
+            <Text style={styles.doneCheckbox}>{memory.done ? '☑' : '☐'}</Text>
+            <Text style={styles.doneLabel}>{memory.done ? 'Done' : 'Mark done'}</Text>
+          </TouchableOpacity>
+          {prio ? (
+            <View style={[styles.prioPill, { backgroundColor: prio.bg }]}>
+              <Text style={[styles.prioText, { color: prio.color }]}>{prio.label} priority</Text>
+            </View>
+          ) : null}
+        </View>
+      ) : null}
 
       {imageUrl ? (
         <Image source={{ uri: imageUrl }} style={styles.image} resizeMode="cover" />
@@ -149,6 +181,12 @@ const styles = StyleSheet.create({
   headerIcon: { fontSize: 34, lineHeight: 38 },
   title: { fontSize: 24, fontWeight: 'bold', color: '#212529', marginBottom: 4 },
   status: { fontSize: 13, color: '#6C757D' },
+  triage: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 16 },
+  doneToggle: { flexDirection: 'row', alignItems: 'center' },
+  doneCheckbox: { fontSize: 24, color: '#6366F1', marginRight: 8 },
+  doneLabel: { fontSize: 15, fontWeight: '600', color: '#374151' },
+  prioPill: { borderRadius: 16, paddingHorizontal: 12, paddingVertical: 6 },
+  prioText: { fontSize: 13, fontWeight: '700' },
   image: { width: '100%', height: 240, borderRadius: 12, marginBottom: 16, backgroundColor: '#E9ECEF' },
   link: { color: '#6366F1', fontSize: 15, marginBottom: 16, textDecorationLine: 'underline' },
   section: { marginBottom: 18 },

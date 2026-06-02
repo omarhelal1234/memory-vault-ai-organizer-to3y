@@ -1,17 +1,21 @@
-// Canonical categories the AI classifies memories into. "Ideas" is first-class:
-// Memory Vault is an ideas collector first, a clipboard second.
-export const CATEGORIES = [
+// SEED categories the AI starts from on an empty vault. The taxonomy is fully
+// dynamic: the AI reuses an existing category/subcategory when one fits and only
+// invents a new one when nothing does (and a periodic reconcile pass merges
+// near-duplicates). So a category is just a string — this list is a starting
+// suggestion, not a closed set.
+export const SEED_CATEGORIES = [
   'Ideas',
   'Recipes',
-  'Movies to Watch',
+  'Watch Later',
   'GitHub Repos',
   'AI News',
-  'Travel Ideas',
+  'Travel',
   'Shopping',
   'Other',
 ] as const;
 
-export type CategoryName = (typeof CATEGORIES)[number];
+// Categories/subcategories are free-form strings (AI-invented, user-mergeable).
+export type CategoryName = string;
 
 // A URL pulled out of a screenshot, note, or link (deduplicated by the AI).
 export type ExtractedLink = {
@@ -105,6 +109,20 @@ export type IdeaData = {
   related?: string[];
 };
 
+// A short-form video saved from TikTok / Instagram Reels / YouTube. Populated
+// from the link's public oEmbed/Open-Graph metadata, then enriched by the AI.
+export type ReelData = {
+  kind: 'reel';
+  platform?: string; // 'TikTok' | 'Instagram' | 'YouTube' | ...
+  title?: string;
+  author?: string;
+  caption?: string;
+  thumbnail_url?: string;
+  url?: string;
+  summary?: string;
+  action_items?: string[]; // what to actually do/learn from it
+};
+
 export type StructuredData =
   | RecipeData
   | ArticleData
@@ -112,7 +130,8 @@ export type StructuredData =
   | RepoData
   | MovieData
   | TravelData
-  | IdeaData;
+  | IdeaData
+  | ReelData;
 
 export type Memory = {
   id: string;
@@ -132,9 +151,15 @@ export type Memory = {
   // Structured extraction (added in migration 20240101000003).
   // Nullable in the DB — Supabase returns null (not undefined) for empty columns.
   category?: string | null;
+  // Dynamic second level under `category` (migration 20240101000004).
+  subcategory?: string | null;
   structured_data?: StructuredData | null;
   extracted_links?: ExtractedLink[] | null;
   spark_score?: number | null; // 0-100, ideas only
+  // Triage priority: 1 = low/someday, 2 = medium, 3 = high/do soon. NULL = unrated.
+  priority?: number | null;
+  // User checkbox: handled captures drop out of the to-do views.
+  done?: boolean;
   title?: string;
   notes?: string;
   created_at: string;

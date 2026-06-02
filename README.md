@@ -1,13 +1,13 @@
 # Memory Vault - AI-Powered Life Organizer
 
 > **✅ PROJECT STATUS: FUNCTIONAL MVP**
-> A working web app is wired to a live Supabase backend: email/password auth, capture (notes / links / images → Storage), AI auto-categorization, a live memory list, category counts, search, and a detail view.
+> A working web app is wired to a live Supabase backend: email/password auth, capture (notes / links / reels / images → Storage), AI filing into a dynamic `category › subcategory` taxonomy, a drill-down browser (Home dashboard → subcategories → item list → detail), priority/done triage, an auto-organize merge pass, search, and rich per-kind detail cards.
 >
 > **Run it:** `npm install` → `npm run web` → open http://localhost:8081. Set `OPENAI_API_KEY` as a Supabase Edge Function secret for AI categorization to run, and (for instant testing) disable "Confirm email" in Supabase → Authentication → Providers → Email.
 
 ## Overview
 
-Memory Vault is a cross-platform AI memory assistant that automatically categorizes screenshots, voice memos, videos, and notes into smart collections like "Movies to Watch", "GitHub Repos", and "AI News" using OpenAI Vision and Whisper APIs.
+Memory Vault is a cross-platform AI memory assistant for the things you screenshot or send yourself "to check later" and then lose. It auto-files screenshots, voice memos, notes, and pasted TikTok/Instagram/YouTube links into a **fully dynamic two-level taxonomy** — the AI reuses your existing categories/subcategories when one fits and only invents a new one when nothing does (a one-tap auto-organize pass merges near-duplicates). Each item gets typed structured data, a triage priority, and a done checkbox so the pile becomes an actually-doable, well-sorted library. Built on OpenAI Vision + Whisper, invoked only from Edge Functions.
 
 **Tech Stack:**
 - **Frontend**: React Native (iOS + Web) with Expo
@@ -96,8 +96,10 @@ supabase functions deploy analyze-memory
 memory-vault-ai-organizer/
 ├── src/
 │   ├── screens/              # React Native screens
-│   │   ├── HomeScreen.tsx
-│   │   ├── CategoryScreen.tsx
+│   │   ├── HomeScreen.tsx        # Category dashboard
+│   │   ├── SubcategoryScreen.tsx # Subcategories within a category
+│   │   ├── ItemListScreen.tsx    # Items (chips + done toggle; also "inbox" mode)
+│   │   ├── CaptureScreen.tsx
 │   │   ├── MemoryDetailScreen.tsx
 │   │   └── SearchScreen.tsx
 │   ├── components/           # Reusable UI components
@@ -136,14 +138,15 @@ memory-vault-ai-organizer/
 - **Offline Support**: Queue uploads when offline, sync when connected
 
 ### 2. AI-Powered Organization
-- **Auto-Categorization**: GPT-4 Vision analyzes screenshots and assigns categories
-- **Smart Tagging**: Extract keywords and entities from images/audio
-- **Confidence Scoring**: Flag low-confidence categorizations for review
+- **Dynamic taxonomy**: the AI files each capture under `category › subcategory`, reusing existing names and only inventing new ones when nothing fits
+- **Auto-organize**: a one-tap LLM reconcile pass merges near-duplicate categories/subcategories
+- **Reel ingestion**: pasted TikTok/Instagram/YouTube links are enriched from oEmbed/Open-Graph metadata (caption, author, thumbnail) before classification
+- **Triage**: per-item priority (1–3) and a done checkbox turn the vault into a doable to-do list
 
-### 3. Smart Collections
-- **Pre-built Categories**: Movies to Watch, GitHub Repos, AI News, Recipes, Travel Ideas
-- **Custom Categories**: Create your own collections
-- **Hierarchical Organization**: Subcategories and nested tags
+### 3. Drill-down navigation
+- **Home**: dashboard of categories with item + to-do counts
+- **Subcategories**: the second level under any category
+- **Item list**: classification/priority chips, done toggles, and an "inbox" lane for items still being analyzed
 
 ### 4. Powerful Search
 - **Full-Text Search**: Search across extracted text, transcripts, titles

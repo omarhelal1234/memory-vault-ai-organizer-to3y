@@ -3,7 +3,7 @@ import type { Memory } from '../types';
 
 // Columns we read for list/detail views.
 const MEMORY_COLUMNS =
-  'id, user_id, type, storage_path, content_text, url, processing_status, ai_metadata, category, structured_data, extracted_links, spark_score, title, notes, created_at, updated_at, captured_at';
+  'id, user_id, type, storage_path, content_text, url, processing_status, ai_metadata, category, subcategory, structured_data, extracted_links, spark_score, priority, done, title, notes, created_at, updated_at, captured_at';
 
 async function requireUserId(): Promise<string> {
   const { data, error } = await supabase.auth.getUser();
@@ -132,6 +132,29 @@ export async function processMyMemories(): Promise<{ processed: number } | null>
   return data as { processed: number };
 }
 
+// Runs the auto-merge pass that collapses near-duplicate categories/subcategories.
+export async function reconcileTaxonomy(): Promise<{ reconciled: number; rowsMoved: number } | null> {
+  const { data, error } = await supabase.functions.invoke('process-my-memories', {
+    body: { mode: 'reconcile' },
+  });
+  if (error) {
+    console.warn('reconcile failed:', error.message);
+    return null;
+  }
+  return data as { reconciled: number; rowsMoved: number };
+}
+
+// Update a memory's triage priority (1-3) or done flag.
+export async function setPriority(id: string, priority: number | null): Promise<void> {
+  const { error } = await supabase.from('memories').update({ priority }).eq('id', id);
+  if (error) throw error;
+}
+
+export async function setDone(id: string, done: boolean): Promise<void> {
+  const { error } = await supabase.from('memories').update({ done }).eq('id', id);
+  if (error) throw error;
+}
+
 // Helpers for displaying AI results.
 export function categoriesOf(m: Memory): string[] {
   return m.ai_metadata?.suggested_categories ?? [];
@@ -142,18 +165,122 @@ export function primaryCategory(m: Memory): string | null {
   return m.category ?? categoriesOf(m)[0] ?? null;
 }
 
-// Emoji per canonical category, used in the feed and detail header.
+export function subcategoryOf(m: Memory): string {
+  return (m.subcategory ?? '').trim() || 'General';
+}
+
+// ---------------------------------------------------------------------------
+// Taxonomy aggregation for the drill-down navigation. All derived client-side
+// from listMemories() so it stays correct no matter what the AI invents.
+// ---------------------------------------------------------------------------
+
+export type CategoryGroup = {
+  name: string;
+  count: number;
+  todo: number; // not-done, priority-rated items
+  icon: string;
+  color: string;
+};
+
+export type SubcategoryGroup = { name: string; count: number; todo: number };
+
+const ANALYZED = (m: Memory) => m.processing_status === 'completed' && !!m.category;
+
+export function topCategories(memories: Memory[]): CategoryGroup[] {
+  const map = new Map<string, { count: number; todo: number }>();
+  for (const m of memories) {
+    if (!ANALYZED(m)) continue;
+    const name = m.category as string;
+    const g = map.get(name) ?? { count: 0, todo: 0 };
+    g.count += 1;
+    if (!m.done) g.todo += 1;
+    map.set(name, g);
+  }
+  return [...map.entries()]
+    .map(([name, g]) => ({
+      name,
+      count: g.count,
+      todo: g.todo,
+      icon: categoryIcon(name),
+      color: categoryColor(name),
+    }))
+    .sort((a, b) => b.count - a.count);
+}
+
+export function subcategoriesOf(memories: Memory[], category: string): SubcategoryGroup[] {
+  const map = new Map<string, { count: number; todo: number }>();
+  for (const m of memories) {
+    if (!ANALYZED(m) || m.category !== category) continue;
+    const name = subcategoryOf(m);
+    const g = map.get(name) ?? { count: 0, todo: 0 };
+    g.count += 1;
+    if (!m.done) g.todo += 1;
+    map.set(name, g);
+  }
+  return [...map.entries()]
+    .map(([name, g]) => ({ name, count: g.count, todo: g.todo }))
+    .sort((a, b) => b.count - a.count);
+}
+
+export function itemsIn(memories: Memory[], category: string, subcategory?: string): Memory[] {
+  return memories
+    .filter((m) => ANALYZED(m) && m.category === category)
+    .filter((m) => !subcategory || subcategoryOf(m) === subcategory)
+    .sort((a, b) => {
+      // Open to-dos first, then by priority desc, then newest.
+      if (!!a.done !== !!b.done) return a.done ? 1 : -1;
+      const pa = a.priority ?? 0;
+      const pb = b.priority ?? 0;
+      if (pa !== pb) return pb - pa;
+      return (b.created_at ?? '').localeCompare(a.created_at ?? '');
+    });
+}
+
+// Memories still awaiting AI categorization (shown in their own "Processing" lane).
+export function unprocessed(memories: Memory[]): Memory[] {
+  return memories.filter((m) => !ANALYZED(m));
+}
+
+// Emoji per known category; dynamic/AI-invented names get a deterministic emoji.
 const CATEGORY_ICON: Record<string, string> = {
   Ideas: '💡',
   Recipes: '🍳',
+  'Watch Later': '🎬',
   'Movies to Watch': '🎬',
   'GitHub Repos': '💻',
   'AI News': '🤖',
+  Travel: '✈️',
   'Travel Ideas': '✈️',
   Shopping: '🛍️',
+  Reels: '📱',
   Other: '📦',
 };
 
-export function categoryIcon(category?: string | null): string {
-  return (category && CATEGORY_ICON[category]) || '📦';
+const FALLBACK_ICONS = ['🏷️', '📚', '🧩', '🎯', '🔖', '🗂️', '✨', '🧠', '📌', '🌱'];
+const PALETTE = [
+  '#6366F1', '#EC4899', '#8B5CF6', '#3B82F6', '#F59E0B',
+  '#06B6D4', '#10B981', '#EF4444', '#14B8A6', '#A855F7',
+];
+
+function hash(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return Math.abs(h);
 }
+
+export function categoryIcon(category?: string | null): string {
+  if (!category) return '📦';
+  return CATEGORY_ICON[category] ?? FALLBACK_ICONS[hash(category) % FALLBACK_ICONS.length];
+}
+
+export function categoryColor(category?: string | null): string {
+  if (!category) return '#6B7280';
+  return PALETTE[hash(category) % PALETTE.length];
+}
+
+// Visual config for the 1-3 triage priority.
+export const PRIORITY_META: Record<number, { label: string; color: string; bg: string }> = {
+  3: { label: 'High', color: '#991B1B', bg: '#FEE2E2' },
+  2: { label: 'Medium', color: '#92400E', bg: '#FEF3C7' },
+  1: { label: 'Low', color: '#1E40AF', bg: '#DBEAFE' },
+};

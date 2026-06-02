@@ -1,15 +1,20 @@
 // Shared structured-extraction engine for both Edge Functions
 // (analyze-memory + process-my-memories).
 //
-// Given a memory, it asks OpenAI to:
-//   1. Classify it into one canonical category.
-//   2. Extract REAL, category-specific structured data
-//      (recipe ingredients/steps, article TL;DR, product price, idea next-action, ...).
+// Given a memory (and the user's EXISTING taxonomy) it asks OpenAI to:
+//   1. File it under a category + subcategory, REUSING an existing one when it
+//      fits and only inventing a new one when nothing does (fully dynamic taxonomy).
+//   2. Extract REAL, card-specific structured data (recipe steps, article TL;DR,
+//      reel action-items, idea next-action, ...).
 //   3. Pull every URL out of the content (incl. text inside screenshots).
-//   4. Score captured ideas 0-100 on novelty/impact.
+//   4. Assign a triage `priority` (1-3) and, for ideas, a 0-100 spark score.
 //
-// The return shape is written across the new memory columns; `ai_metadata` is
-// kept populated for backward compatibility with older clients.
+// For link captures it first fetches the link's public oEmbed / Open-Graph
+// metadata, so a pasted TikTok / Reel / YouTube URL is analyzed from its real
+// caption + author + thumbnail rather than the bare URL.
+//
+// `reconcileTaxonomy()` is a separate pass that merges near-duplicate
+// categories/subcategories after the fact.
 
 const CHAT_MODEL = 'gpt-4o';
 
@@ -22,6 +27,12 @@ export interface MemoryInput {
   title?: string;
 }
 
+// The user's current taxonomy, passed in so the model reuses it instead of
+// inventing synonyms. Each entry is a top-level category and its subcategories.
+export interface Taxonomy {
+  categories: { name: string; subcategories: string[] }[];
+}
+
 export interface ExtractionResult {
   // Legacy shape (kept for backward compatibility with existing UI/api).
   ai_metadata: {
@@ -30,64 +41,109 @@ export interface ExtractionResult {
     suggested_tags?: string[];
     transcript?: string;
   };
-  // New structured columns.
+  // Dynamic taxonomy + new structured columns.
   category: string;
+  subcategory: string;
   structured_data: Record<string, unknown> | null;
   extracted_links: { url: string; label?: string }[];
   spark_score: number | null;
+  priority: number | null;
 }
 
-const CATEGORIES = [
-  'Ideas',
-  'Recipes',
-  'Movies to Watch',
-  'GitHub Repos',
-  'AI News',
-  'Travel Ideas',
-  'Shopping',
-  'Other',
+// The fixed set of rich-card renderers the UI knows how to draw. The taxonomy is
+// dynamic, but `structured_data.kind` must be one of these (or null) — the
+// category and the card kind are independent now.
+const STRUCTURED_KINDS = [
+  'idea',
+  'recipe',
+  'movie',
+  'repo',
+  'article',
+  'travel',
+  'product',
+  'reel',
 ] as const;
 
-// The instruction block shared by every text/vision call. It describes the
-// canonical categories AND the per-category `structured_data` schema so the
-// model returns rich, typed fields instead of a flat blob.
-const EXTRACTION_PROMPT = `You are the extraction engine for "Memory Vault", a life-changing ideas collector.
+const SEED_CATEGORIES = [
+  'Ideas',
+  'Recipes',
+  'Watch Later',
+  'GitHub Repos',
+  'AI News',
+  'Travel',
+  'Shopping',
+  'Other',
+];
+
+// Renders the user's existing taxonomy into the prompt so the model files things
+// under what already exists instead of minting synonyms.
+function taxonomyBlock(taxonomy?: Taxonomy): string {
+  const cats = taxonomy?.categories?.filter((c) => c.name) ?? [];
+  if (cats.length === 0) {
+    return `The user's vault is empty. Common starting categories you may use: ${SEED_CATEGORIES.join(
+      ', ',
+    )}. Invent a concise subcategory that fits.`;
+  }
+  const lines = cats.map((c) => {
+    const subs = (c.subcategories ?? []).filter(Boolean);
+    return `- ${c.name}${subs.length ? ` (subcategories: ${subs.join(', ')})` : ''}`;
+  });
+  return `The user ALREADY has these categories and subcategories:\n${lines.join(
+    '\n',
+  )}\n\nReuse an existing category AND subcategory whenever the content reasonably fits one (match the exact spelling). Only invent a NEW category or subcategory when nothing existing fits — keep new names short, Title Case, and reusable (prefer a durable theme like "Productivity" over a one-off).`;
+}
+
+function buildPrompt(taxonomy?: Taxonomy): string {
+  return `You are the extraction engine for "Memory Vault", a life-organizer that turns saved screenshots, links, reels and notes into an actionable, well-sorted library.
 Pull out REAL, structured, actionable information — never just a vague summary.
 
-Classify the content into exactly ONE category: ${CATEGORIES.join(', ')}.
+${taxonomyBlock(taxonomy)}
 
 Respond ONLY as a single JSON object with these top-level keys:
-- "category": one of the categories above.
+- "category": the best top-level category (existing one if it fits, else a new short Title Case name).
+- "subcategory": a more specific second level under that category (existing one if it fits, else a new short Title Case name). Never empty — use "General" only as a last resort.
 - "summary": one concise sentence describing the content.
 - "tags": string[] of 2-6 short lowercase topical tags.
-- "extracted_links": array of { "url": string, "label": string } for EVERY URL you can find in the content, including links visible as text inside an image/screenshot. Deduplicate. Empty array if none.
-- "spark_score": integer 0-100 rating novelty + potential impact. ONLY set this when category is "Ideas"; otherwise null.
-- "structured_data": an object whose shape depends on the category (see below). Use null only for "Other". Omit fields you genuinely cannot determine; never invent facts.
+- "priority": integer 1-3 for how urgently the user should act on this — 3 = act soon / time-sensitive, 2 = worth doing, 1 = someday / reference. Base it on actionability and time-sensitivity.
+- "extracted_links": array of { "url": string, "label": string } for EVERY URL you can find (including links visible as text inside an image/screenshot). ALSO, whenever the content NAMES specific YouTube videos, channels, or creators without giving a direct link, add a YouTube link for each so the user can go watch it: use a YouTube SEARCH url of the form "https://www.youtube.com/results?search_query=" followed by the URL-encoded video/channel name, with a label naming it (e.g. label "3Blue1Brown"). Do NOT invent exact video IDs or watch URLs — only use real URLs that actually appear in the content, otherwise the search-url form. Deduplicate. Empty array if none.
+- "spark_score": integer 0-100 rating novelty + potential impact. ONLY set this when "structured_data.kind" is "idea"; otherwise null.
+- "structured_data": an object whose "kind" is ONE of: ${STRUCTURED_KINDS.join(
+    ', ',
+  )} — or null if none fit. The kind is chosen by content TYPE and is independent of the category. Omit fields you cannot determine; never invent facts.
 
-structured_data shapes by category:
-- Ideas: { "kind":"idea", "headline", "one_liner", "problem", "audience", "next_action", "ten_x" (what would make it 10x bigger), "related": string[] }
-- Recipes: { "kind":"recipe", "title", "servings", "prep_time", "cook_time", "total_time", "cuisine", "ingredients": string[], "steps": string[] (numbered cooking steps), "source_url", "notes" }
-- Movies to Watch: { "kind":"movie", "title", "year", "genre", "director", "where_to_watch", "synopsis", "why_save" }
-- GitHub Repos: { "kind":"repo", "name", "owner", "description", "language", "stars", "url", "use_case" }
-- AI News: { "kind":"article", "headline", "author", "site", "published", "reading_time", "tldr": string[] (2-4 bullets), "key_points": string[], "url" }
-- Travel Ideas: { "kind":"travel", "place", "country", "region", "best_season", "highlights": string[], "est_budget", "map_query" }
-- Shopping: { "kind":"product", "product", "brand", "price", "retailer", "url", "pros": string[], "cons": string[] }
-- Other: null, OR { "kind":"article", ... } (same fields as AI News) when the content is readable article-like text.
+structured_data shapes by kind:
+- idea: { "kind":"idea", "headline", "one_liner", "problem", "audience", "next_action", "ten_x", "related": string[] }
+- recipe: { "kind":"recipe", "title", "servings", "prep_time", "cook_time", "total_time", "cuisine", "ingredients": string[], "steps": string[], "source_url", "notes" }
+- movie: { "kind":"movie", "title", "year", "genre", "director", "where_to_watch", "synopsis", "why_save" }
+- repo: { "kind":"repo", "name", "owner", "description", "language", "stars", "url", "use_case" }
+- article: { "kind":"article", "headline", "author", "site", "published", "reading_time", "tldr": string[], "key_points": string[], "url" }
+- travel: { "kind":"travel", "place", "country", "region", "best_season", "highlights": string[], "est_budget", "map_query" }
+- product: { "kind":"product", "product", "brand", "price", "retailer", "url", "pros": string[], "cons": string[] }
+- reel: { "kind":"reel", "platform", "title", "author", "caption", "thumbnail_url", "url", "summary", "action_items": string[] (what to actually do or learn from it) }
 
-If a plain link or article doesn't fit Recipes/Repos/Movies/Travel/Shopping, classify it as "AI News" only if it's genuinely tech/AI; otherwise use "Other" (with an article card if it's readable, else null structured_data).`;
+Use kind "reel" for short-form videos from TikTok, Instagram Reels, or YouTube. Use "article" for readable articles/news. Use null when no card type fits.`;
+}
 
-// The structured_data.kind that is valid for each category. Anything the model
-// returns that doesn't match is dropped, so category and card never disagree.
-const KIND_BY_CATEGORY: Record<string, string> = {
-  Ideas: 'idea',
-  Recipes: 'recipe',
-  'Movies to Watch': 'movie',
-  'GitHub Repos': 'repo',
-  'AI News': 'article',
-  'Travel Ideas': 'travel',
-  Shopping: 'product',
-  // "Other" is special-cased below: only 'article' or null is allowed.
-};
+// Build the taxonomy structure the prompt wants from raw (category, subcategory)
+// rows already filed in the vault.
+export function buildTaxonomy(
+  rows: { category?: string | null; subcategory?: string | null }[],
+): Taxonomy {
+  const map = new Map<string, Set<string>>();
+  for (const r of rows) {
+    const c = (r.category ?? '').trim();
+    if (!c) continue;
+    const sub = (r.subcategory ?? '').trim();
+    if (!map.has(c)) map.set(c, new Set());
+    if (sub) map.get(c)!.add(sub);
+  }
+  return {
+    categories: [...map.entries()].map(([name, subs]) => ({
+      name,
+      subcategories: [...subs],
+    })),
+  };
+}
 
 async function chatJSON(
   openaiKey: string,
@@ -126,13 +182,34 @@ function harvestUrls(text: string | undefined): { url: string; label?: string }[
   return found.map((u) => ({ url: u.replace(/[.,;]+$/, '') }));
 }
 
+// Snap a model-returned name to an existing taxonomy entry when it matches
+// case-insensitively, so "ai news" reuses "AI News" instead of forking it.
+function snap(name: string, existing: string[]): string {
+  const hit = existing.find((e) => e.toLowerCase() === name.toLowerCase());
+  return hit ?? name;
+}
+
+function cleanName(v: unknown): string {
+  return typeof v === 'string' ? v.trim().replace(/\s+/g, ' ') : '';
+}
+
 // Normalize whatever the model returned into a strict ExtractionResult, merging
 // in any URLs found by the regex safety net and deduplicating.
-function normalize(raw: any, extraSourceText?: string): ExtractionResult {
-  const category =
-    typeof raw?.category === 'string' && (CATEGORIES as readonly string[]).includes(raw.category)
-      ? raw.category
-      : 'Other';
+function normalize(
+  raw: any,
+  opts: { extraSourceText?: string; taxonomy?: Taxonomy; seed?: Partial<Record<string, unknown>> } = {},
+): ExtractionResult {
+  const { extraSourceText, taxonomy, seed } = opts;
+
+  const existingCats = (taxonomy?.categories ?? []).map((c) => c.name);
+  let category = cleanName(raw?.category) || 'Other';
+  category = snap(category, existingCats);
+
+  const existingSubs =
+    taxonomy?.categories?.find((c) => c.name.toLowerCase() === category.toLowerCase())
+      ?.subcategories ?? [];
+  let subcategory = cleanName(raw?.subcategory) || 'General';
+  subcategory = snap(subcategory, existingSubs);
 
   const modelLinks: { url: string; label?: string }[] = Array.isArray(raw?.extracted_links)
     ? raw.extracted_links
@@ -149,21 +226,33 @@ function normalize(raw: any, extraSourceText?: string): ExtractionResult {
     extracted_links.push(l);
   }
 
+  // structured_data.kind must be one of the known renderers; drop anything else.
+  let structured_data: Record<string, unknown> | null =
+    raw?.structured_data &&
+    typeof raw.structured_data === 'object' &&
+    !Array.isArray(raw.structured_data)
+      ? raw.structured_data
+      : null;
+  if (structured_data && !(STRUCTURED_KINDS as readonly string[]).includes(structured_data.kind as string)) {
+    structured_data = null;
+  }
+
+  // Merge any caller-provided seed fields (e.g. reel thumbnail/platform we fetched
+  // ourselves) into a reel card without overwriting what the model determined.
+  if (structured_data && seed && structured_data.kind === 'reel') {
+    for (const [k, v] of Object.entries(seed)) {
+      if (v != null && structured_data[k] == null) structured_data[k] = v;
+    }
+  }
+
   let spark_score: number | null = null;
-  if (category === 'Ideas' && typeof raw?.spark_score === 'number') {
+  if (structured_data?.kind === 'idea' && typeof raw?.spark_score === 'number') {
     spark_score = Math.max(0, Math.min(100, Math.round(raw.spark_score)));
   }
 
-  // Enforce that structured_data.kind matches the category, so filtering and the
-  // UI switch never disagree with the classification. Drop mismatches to null.
-  let structured_data: Record<string, unknown> | null =
-    raw?.structured_data && typeof raw.structured_data === 'object' && !Array.isArray(raw.structured_data)
-      ? raw.structured_data
-      : null;
-  if (structured_data) {
-    const kind = structured_data.kind;
-    const allowed = category === 'Other' ? 'article' : KIND_BY_CATEGORY[category];
-    if (kind !== allowed) structured_data = null;
+  let priority: number | null = null;
+  if (typeof raw?.priority === 'number') {
+    priority = Math.max(1, Math.min(3, Math.round(raw.priority)));
   }
 
   const tags = Array.isArray(raw?.tags) ? raw.tags.filter((t: any) => typeof t === 'string') : [];
@@ -175,9 +264,11 @@ function normalize(raw: any, extraSourceText?: string): ExtractionResult {
       suggested_tags: tags,
     },
     category,
+    subcategory,
     structured_data,
     extracted_links,
     spark_score,
+    priority,
   };
 }
 
@@ -202,17 +293,152 @@ function toBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-async function analyzeText(openaiKey: string, input: string): Promise<ExtractionResult> {
+// ---------------------------------------------------------------------------
+// Link enrichment: turn a bare URL into real context (caption/author/thumbnail).
+// ---------------------------------------------------------------------------
+
+export interface LinkContext {
+  platform?: string;
+  title?: string;
+  author?: string;
+  caption?: string;
+  thumbnail_url?: string;
+  isVideo: boolean;
+  text: string; // human-readable blob fed to the model
+}
+
+function platformOf(url: string): { name?: string; isVideo: boolean } {
+  let host = '';
+  try {
+    host = new URL(url).hostname.replace(/^www\./, '').toLowerCase();
+  } catch {
+    return { isVideo: false };
+  }
+  if (host.includes('tiktok.com')) return { name: 'TikTok', isVideo: true };
+  if (host.includes('instagram.com')) return { name: 'Instagram', isVideo: true };
+  if (host === 'youtube.com' || host === 'm.youtube.com' || host === 'youtu.be')
+    return { name: 'YouTube', isVideo: true };
+  if (host.includes('github.com')) return { name: 'GitHub', isVideo: false };
+  return { isVideo: false };
+}
+
+function metaTag(html: string, prop: string): string | undefined {
+  // Match <meta property="og:title" content="..."> in either attribute order.
+  const re = new RegExp(
+    `<meta[^>]+(?:property|name)=["']${prop}["'][^>]*content=["']([^"']*)["']`,
+    'i',
+  );
+  const m = html.match(re);
+  if (m) return decodeHtml(m[1]);
+  const re2 = new RegExp(
+    `<meta[^>]+content=["']([^"']*)["'][^>]*(?:property|name)=["']${prop}["']`,
+    'i',
+  );
+  const m2 = html.match(re2);
+  return m2 ? decodeHtml(m2[1]) : undefined;
+}
+
+function decodeHtml(s: string): string {
+  return s
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&#x27;/g, "'");
+}
+
+async function fetchJson(url: string): Promise<any | null> {
+  try {
+    const resp = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 MemoryVaultBot' } });
+    if (!resp.ok) return null;
+    return await resp.json();
+  } catch {
+    return null;
+  }
+}
+
+async function fetchHtml(url: string): Promise<string | null> {
+  try {
+    const resp = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 MemoryVaultBot' } });
+    if (!resp.ok) return null;
+    const text = await resp.text();
+    return text.slice(0, 200_000); // cap; og: tags live in <head>
+  } catch {
+    return null;
+  }
+}
+
+// Best-effort: official oEmbed for YouTube/TikTok, Open-Graph scrape otherwise.
+// Never throws — on failure we still classify from the bare URL.
+export async function fetchLinkContext(url: string, title?: string): Promise<LinkContext> {
+  const { name: platform, isVideo } = platformOf(url);
+  const ctx: LinkContext = { platform, isVideo, text: '' };
+
+  try {
+    if (platform === 'YouTube') {
+      const j = await fetchJson(
+        `https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(url)}`,
+      );
+      if (j) {
+        ctx.title = j.title;
+        ctx.author = j.author_name;
+        ctx.thumbnail_url = j.thumbnail_url;
+      }
+    } else if (platform === 'TikTok') {
+      const j = await fetchJson(`https://www.tiktok.com/oembed?url=${encodeURIComponent(url)}`);
+      if (j) {
+        ctx.title = j.title;
+        ctx.caption = j.title;
+        ctx.author = j.author_name;
+        ctx.thumbnail_url = j.thumbnail_url;
+      }
+    }
+
+    // Fall back to / supplement with Open-Graph tags from the page itself.
+    if (!ctx.title || !ctx.thumbnail_url) {
+      const html = await fetchHtml(url);
+      if (html) {
+        ctx.title = ctx.title || metaTag(html, 'og:title');
+        ctx.caption = ctx.caption || metaTag(html, 'og:description');
+        ctx.thumbnail_url = ctx.thumbnail_url || metaTag(html, 'og:image');
+        ctx.author = ctx.author || metaTag(html, 'og:site_name');
+      }
+    }
+  } catch {
+    // ignore — partial context is fine
+  }
+
+  const parts = [
+    `URL: ${url}`,
+    platform ? `Platform: ${platform}` : '',
+    ctx.title ? `Title: ${ctx.title}` : title ? `Title: ${title}` : '',
+    ctx.author ? `Author/Channel: ${ctx.author}` : '',
+    ctx.caption ? `Caption/Description: ${ctx.caption}` : '',
+  ].filter(Boolean);
+  ctx.text = parts.join('\n');
+  return ctx;
+}
+
+// ---------------------------------------------------------------------------
+
+async function analyzeText(
+  openaiKey: string,
+  input: string,
+  taxonomy?: Taxonomy,
+  seed?: Record<string, unknown>,
+): Promise<ExtractionResult> {
   const raw = await chatJSON(openaiKey, [
-    { role: 'user', content: `${EXTRACTION_PROMPT}\n\n--- CONTENT ---\n${input}` },
+    { role: 'user', content: `${buildPrompt(taxonomy)}\n\n--- CONTENT ---\n${input}` },
   ]);
-  return normalize(raw, input);
+  return normalize(raw, { extraSourceText: input, taxonomy, seed });
 }
 
 async function analyzeImage(
   openaiKey: string,
   memory: MemoryInput,
   supabase: any,
+  taxonomy?: Taxonomy,
 ): Promise<ExtractionResult> {
   if (!memory.storage_path) throw new Error('Image memory has no storage_path');
 
@@ -230,20 +456,21 @@ async function analyzeImage(
       content: [
         {
           type: 'text',
-          text: `${EXTRACTION_PROMPT}\n\nAlso transcribe any visible text in the image and use it for extraction (especially URLs).`,
+          text: `${buildPrompt(taxonomy)}\n\nAlso transcribe any visible text in the image and use it for extraction (especially URLs).`,
         },
         { type: 'image_url', image_url: { url: dataUrl } },
       ],
     },
   ]);
   // No reliable source text for the regex net here; the model handles in-image URLs.
-  return normalize(raw, memory.title);
+  return normalize(raw, { extraSourceText: memory.title, taxonomy });
 }
 
 async function transcribeAudio(
   openaiKey: string,
   memory: MemoryInput,
   supabase: any,
+  taxonomy?: Taxonomy,
 ): Promise<ExtractionResult> {
   if (!memory.storage_path) throw new Error('Voice memo has no storage_path');
 
@@ -266,9 +493,31 @@ async function transcribeAudio(
   }
   const { text: transcript } = await resp.json();
 
-  const result = await analyzeText(openaiKey, `Voice memo transcript: "${transcript}"`);
+  const result = await analyzeText(openaiKey, `Voice memo transcript: "${transcript}"`, taxonomy);
   result.ai_metadata.transcript = transcript;
   return result;
+}
+
+async function analyzeLink(
+  openaiKey: string,
+  memory: MemoryInput,
+  taxonomy?: Taxonomy,
+): Promise<ExtractionResult> {
+  const url = memory.url ?? '';
+  const ctx = await fetchLinkContext(url, memory.title ?? memory.content_text);
+  // For short-form video, pre-seed the reel card with what we fetched so the
+  // thumbnail/platform survive even if the model omits them.
+  const seed = ctx.isVideo
+    ? {
+        platform: ctx.platform,
+        author: ctx.author,
+        thumbnail_url: ctx.thumbnail_url,
+        url,
+      }
+    : undefined;
+  const content =
+    ctx.text || `URL: ${url}\nTitle: ${memory.title ?? memory.content_text ?? 'Unknown'}`;
+  return analyzeText(openaiKey, content, taxonomy, seed);
 }
 
 // Dispatch by memory type. Returns the full structured ExtractionResult.
@@ -276,20 +525,22 @@ export async function extractMemory(
   openaiKey: string,
   memory: MemoryInput,
   supabase: any,
+  taxonomy?: Taxonomy,
 ): Promise<ExtractionResult> {
   switch (memory.type) {
     case 'screenshot':
     case 'photo':
-      return analyzeImage(openaiKey, memory, supabase);
+      return analyzeImage(openaiKey, memory, supabase, taxonomy);
     case 'voice_memo':
-      return transcribeAudio(openaiKey, memory, supabase);
+      return transcribeAudio(openaiKey, memory, supabase, taxonomy);
     case 'link':
+      return analyzeLink(openaiKey, memory, taxonomy);
+    case 'note':
       return analyzeText(
         openaiKey,
-        `URL: ${memory.url ?? 'Unknown'}\nTitle: ${memory.title ?? memory.content_text ?? 'Unknown'}`,
+        `Note: ${memory.content_text ?? memory.title ?? '(empty)'}`,
+        taxonomy,
       );
-    case 'note':
-      return analyzeText(openaiKey, `Note: ${memory.content_text ?? memory.title ?? '(empty)'}`);
     case 'video':
       // No video transcription pipeline yet; record minimal metadata.
       return {
@@ -299,11 +550,78 @@ export async function extractMemory(
           suggested_tags: [],
         },
         category: 'Other',
+        subcategory: 'General',
         structured_data: null,
-        extracted_links: harvestUrls(memory.url) ,
+        extracted_links: harvestUrls(memory.url),
         spark_score: null,
+        priority: null,
       };
     default:
       throw new Error(`Unsupported memory type: ${memory.type}`);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Taxonomy reconciliation: merge near-duplicate categories/subcategories.
+// ---------------------------------------------------------------------------
+
+export interface TaxonomyPair {
+  category: string;
+  subcategory: string;
+  count: number;
+}
+
+// A single rename to apply: rows matching (from_category, from_subcategory) become
+// (to_category, to_subcategory).
+export interface TaxonomyMapping {
+  from_category: string;
+  from_subcategory: string;
+  to_category: string;
+  to_subcategory: string;
+}
+
+// Ask the model which existing (category, subcategory) pairs are duplicates/
+// synonyms and how to collapse them. Returns ONLY the pairs that should change.
+export async function reconcileTaxonomy(
+  openaiKey: string,
+  pairs: TaxonomyPair[],
+): Promise<TaxonomyMapping[]> {
+  if (pairs.length < 2) return [];
+
+  const list = pairs
+    .map((p) => `- category="${p.category}" | subcategory="${p.subcategory}" | items=${p.count}`)
+    .join('\n');
+
+  const prompt = `You are tidying a personal knowledge vault's taxonomy. Below are the user's current (category, subcategory) pairs with item counts. Some are near-duplicates or synonyms (e.g. "AI" vs "AI News", "Travel" vs "Travel Ideas", "Recipe" vs "Recipes").
+
+Merge clear duplicates/synonyms into ONE canonical name each, preferring the variant with more items (or the cleaner Title Case name). Do NOT merge things that are genuinely distinct. Be conservative.
+
+Respond ONLY as JSON: { "mappings": [ { "from_category", "from_subcategory", "to_category", "to_subcategory" } ] }. Include an entry ONLY when the pair should change (from != to). Empty array if nothing should change.
+
+Current pairs:
+${list}`;
+
+  const raw = await chatJSON(openaiKey, [{ role: 'user', content: prompt }], 1200);
+  const out: TaxonomyMapping[] = [];
+  const seen = new Set<string>();
+  if (Array.isArray(raw?.mappings)) {
+    for (const m of raw.mappings) {
+      const fc = cleanName(m?.from_category);
+      const fs = cleanName(m?.from_subcategory);
+      const tc = cleanName(m?.to_category);
+      const ts = cleanName(m?.to_subcategory);
+      if (!fc || !tc) continue;
+      if (fc === tc && fs === ts) continue; // no-op
+      const key = `${fc} ${fs}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({
+        from_category: fc,
+        from_subcategory: fs || 'General',
+        to_category: tc,
+        to_subcategory: ts || 'General',
+      });
+    }
+  }
+  return out;
 }
