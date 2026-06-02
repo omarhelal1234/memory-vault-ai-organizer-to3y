@@ -8,7 +8,7 @@ import {
   RefreshControl,
   ActivityIndicator,
 } from 'react-native';
-import { listMemories, processMyMemories, primaryCategory } from '../lib/api';
+import { listMemories, processMyMemories, primaryCategory, categoryIcon } from '../lib/api';
 import type { Memory } from '../types';
 
 const TYPE_ICON: Record<string, string> = {
@@ -31,12 +31,14 @@ const MemoryRow = ({ memory, onPress }: { memory: Memory; onPress: () => void })
   const status = STATUS_STYLE[memory.processing_status] ?? STATUS_STYLE.pending;
   const category = primaryCategory(memory);
   const summary = memory.ai_metadata?.summary;
+  // Once analyzed, lead with the category emoji; before that, the capture type.
+  const icon = category ? categoryIcon(category) : TYPE_ICON[memory.type] ?? '📦';
   const titleText =
     memory.title || summary || memory.content_text || memory.url || 'Untitled memory';
 
   return (
     <TouchableOpacity style={styles.row} onPress={onPress}>
-      <Text style={styles.rowIcon}>{TYPE_ICON[memory.type] ?? '📦'}</Text>
+      <Text style={styles.rowIcon}>{icon}</Text>
       <View style={styles.rowBody}>
         <Text style={styles.rowTitle} numberOfLines={1}>
           {titleText}
@@ -51,6 +53,9 @@ const MemoryRow = ({ memory, onPress }: { memory: Memory; onPress: () => void })
             <Text style={[styles.badgeText, { color: status.fg }]}>{status.label}</Text>
           </View>
           {category ? <Text style={styles.category}>{category}</Text> : null}
+          {typeof memory.spark_score === 'number' ? (
+            <Text style={styles.spark}>⚡ {memory.spark_score}</Text>
+          ) : null}
         </View>
       </View>
     </TouchableOpacity>
@@ -164,6 +169,7 @@ const styles = StyleSheet.create({
   badge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
   badgeText: { fontSize: 11, fontWeight: '700' },
   category: { fontSize: 12, color: '#6366F1', fontWeight: '600' },
+  spark: { fontSize: 12, color: '#B45309', fontWeight: '700' },
   empty: { alignItems: 'center', padding: 40 },
   emptyTitle: { fontSize: 18, fontWeight: '600', color: '#ADB5BD', marginBottom: 8 },
   emptySubtitle: { fontSize: 14, color: '#ADB5BD', textAlign: 'center' },

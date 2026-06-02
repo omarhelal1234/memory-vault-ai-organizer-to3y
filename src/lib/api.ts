@@ -3,7 +3,7 @@ import type { Memory } from '../types';
 
 // Columns we read for list/detail views.
 const MEMORY_COLUMNS =
-  'id, user_id, type, storage_path, content_text, url, processing_status, ai_metadata, title, notes, created_at, updated_at, captured_at';
+  'id, user_id, type, storage_path, content_text, url, processing_status, ai_metadata, category, structured_data, extracted_links, spark_score, title, notes, created_at, updated_at, captured_at';
 
 async function requireUserId(): Promise<string> {
   const { data, error } = await supabase.auth.getUser();
@@ -138,5 +138,22 @@ export function categoriesOf(m: Memory): string[] {
 }
 
 export function primaryCategory(m: Memory): string | null {
-  return categoriesOf(m)[0] ?? null;
+  // Prefer the denormalized `category` column; fall back to legacy ai_metadata.
+  return m.category ?? categoriesOf(m)[0] ?? null;
+}
+
+// Emoji per canonical category, used in the feed and detail header.
+const CATEGORY_ICON: Record<string, string> = {
+  Ideas: '💡',
+  Recipes: '🍳',
+  'Movies to Watch': '🎬',
+  'GitHub Repos': '💻',
+  'AI News': '🤖',
+  'Travel Ideas': '✈️',
+  Shopping: '🛍️',
+  Other: '📦',
+};
+
+export function categoryIcon(category?: string | null): string {
+  return (category && CATEGORY_ICON[category]) || '📦';
 }

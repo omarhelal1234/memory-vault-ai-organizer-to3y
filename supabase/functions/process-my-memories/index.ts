@@ -7,24 +7,17 @@
 //
 // Auth model: the caller's JWT. No CRON_SECRET / service-role key required.
 // Only secret needed: OPENAI_API_KEY (set as an Edge Function secret).
+//
+// Extraction logic is shared with `analyze-memory` via ../_shared/extract.ts.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { extractMemory, type MemoryInput } from '../_shared/extract.ts';
 
 const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL');
 const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY');
 
 const BATCH_SIZE = 10;
-const CHAT_MODEL = 'gpt-4o';
-
-interface Memory {
-  id: string;
-  type: string;
-  storage_path?: string;
-  url?: string;
-  content_text?: string;
-  title?: string;
-}
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -71,7 +64,7 @@ Deno.serve(async (req) => {
     }
 
     const results = [];
-    for (const memory of pending as Memory[]) {
+    for (const memory of pending as MemoryInput[]) {
       results.push(await processMemory(supabase, memory));
     }
 
@@ -81,7 +74,7 @@ Deno.serve(async (req) => {
   }
 });
 
-async function processMemory(supabase: any, memory: Memory) {
+async function processMemory(supabase: any, memory: MemoryInput) {
   // Atomically claim the row: only flip it if still pending (and owned by caller via RLS).
   const { data: claimed, error: claimError } = await supabase
     .from('memories')
@@ -96,110 +89,28 @@ async function processMemory(supabase: any, memory: Memory) {
   }
 
   try {
-    const aiMetadata = await analyze(memory, supabase);
+    const result = await extractMemory(OPENAI_API_KEY!, memory, supabase);
     const { error: updateError } = await supabase
       .from('memories')
-      .update({ processing_status: 'completed', ai_metadata: aiMetadata })
+      .update({
+        processing_status: 'completed',
+        ai_metadata: result.ai_metadata,
+        category: result.category,
+        structured_data: result.structured_data,
+        extracted_links: result.extracted_links,
+        spark_score: result.spark_score,
+      })
       .eq('id', memory.id);
     if (updateError) throw updateError;
     return { id: memory.id, status: 'success' };
   } catch (error) {
+    // Log full detail server-side; return only a generic message so provider
+    // internals (e.g. raw OpenAI error bodies) are never echoed to callers.
+    console.error(`process-my-memories failed for ${memory.id}:`, error);
     await supabase
       .from('memories')
       .update({ processing_status: 'failed' })
       .eq('id', memory.id);
-    return { id: memory.id, status: 'failed', error: (error as Error).message };
+    return { id: memory.id, status: 'failed', error: 'Extraction failed' };
   }
-}
-
-async function analyze(memory: Memory, supabase: any) {
-  switch (memory.type) {
-    case 'screenshot':
-    case 'photo':
-      return analyzeImage(memory, supabase);
-    case 'link':
-      return analyzeText(
-        `URL: ${memory.url ?? 'Unknown'}. Title: ${memory.title ?? memory.content_text ?? 'Unknown'}.`
-      );
-    case 'note':
-      return analyzeText(`Note: ${memory.content_text ?? memory.title ?? '(empty)'}`);
-    case 'video':
-      return { summary: memory.title ?? 'Video memory', suggested_categories: ['Other'], suggested_tags: [] };
-    default:
-      throw new Error(`Unsupported memory type: ${memory.type}`);
-  }
-}
-
-const CATEGORY_PROMPT =
-  'Categories to choose from: Movies to Watch, GitHub Repos, AI News, Recipes, Travel Ideas, Shopping, Other. ' +
-  'Respond as JSON with keys: summary (string), suggested_categories (string[]), suggested_tags (string[]).';
-
-async function chatJSON(messages: unknown[], maxTokens = 500) {
-  const resp = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${OPENAI_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: CHAT_MODEL,
-      messages,
-      max_tokens: maxTokens,
-      response_format: { type: 'json_object' },
-    }),
-  });
-  if (!resp.ok) {
-    throw new Error(`OpenAI chat error ${resp.status}: ${await resp.text()}`);
-  }
-  const data = await resp.json();
-  const content = data?.choices?.[0]?.message?.content;
-  if (!content) throw new Error('OpenAI chat returned no content');
-  return JSON.parse(content);
-}
-
-async function analyzeText(input: string) {
-  return chatJSON(
-    [{ role: 'user', content: `Categorize this memory. ${CATEGORY_PROMPT}\n\n${input}` }],
-    300
-  );
-}
-
-function mimeFromPath(path?: string): string {
-  const ext = (path?.split('.').pop() ?? '').toLowerCase();
-  switch (ext) {
-    case 'png': return 'image/png';
-    case 'webp': return 'image/webp';
-    case 'heic': return 'image/heic';
-    case 'gif': return 'image/gif';
-    default: return 'image/jpeg';
-  }
-}
-
-function toBase64(bytes: Uint8Array): string {
-  let binary = '';
-  const chunkSize = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
-  }
-  return btoa(binary);
-}
-
-async function analyzeImage(memory: Memory, supabase: any) {
-  if (!memory.storage_path) throw new Error('Image memory has no storage_path');
-  const { data: imageData, error } = await supabase.storage.from('memories').download(memory.storage_path);
-  if (error) throw error;
-  const bytes = new Uint8Array(await imageData.arrayBuffer());
-  const dataUrl = `data:${mimeFromPath(memory.storage_path)};base64,${toBase64(bytes)}`;
-  return chatJSON(
-    [
-      {
-        role: 'user',
-        content: [
-          { type: 'text', text: `Analyze this image. ${CATEGORY_PROMPT}` },
-          { type: 'image_url', image_url: { url: dataUrl } },
-        ],
-      },
-    ],
-    500
-  );
 }
