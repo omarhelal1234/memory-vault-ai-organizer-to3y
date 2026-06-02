@@ -4,7 +4,7 @@ Read this first. It is the project map so you don't have to re-scan the whole tr
 
 ## What this is
 
-**Memory Vault** — a cross-platform (iOS + Web) AI life-organizer. Users capture screenshots, photos, voice memos, links, and notes; OpenAI auto-categorizes them into smart collections (Movies to Watch, GitHub Repos, AI News, Recipes, Travel Ideas, Shopping, Other).
+**Memory Vault** — a cross-platform (iOS + Web) AI life-organizer / ideas collector. Users capture screenshots, photos, voice memos, links, and notes; OpenAI classifies each into a smart category (**Ideas**, Recipes, Movies to Watch, GitHub Repos, AI News, Travel Ideas, Shopping, Other) and extracts **typed, category-specific structured data** — recipe ingredients/steps, article TL;DRs, product prices, idea next-actions — plus every URL it can find (incl. text inside screenshots) and a 0–100 "spark score" for ideas. The detail screen renders a different rich card per category.
 
 - **Frontend**: React Native via Expo `~50`, TypeScript (strict), React Navigation (native-stack), Zustand for state.
 - **Backend**: Supabase (Auth, Postgres + RLS, Storage, Edge Functions on Deno).
@@ -18,12 +18,14 @@ App.tsx                         # AuthProvider + auth-gated native-stack navigat
 env.js                          # Generated web env shim (window.ENV) — do not hand-edit; NOT read by src/lib/supabase.ts
 src/
   screens/                      # AuthScreen, HomeScreen (list+FAB), CaptureScreen, CategoryScreen, MemoryDetailScreen, SearchScreen
+  components/StructuredCard.tsx # Renders the category-specific rich card (recipe/article/product/repo/movie/travel/idea) + ExtractedLinks + SparkBar
   lib/supabase.ts               # Supabase client; reads EXPO_PUBLIC_* env, throws on placeholders
   lib/auth.tsx                  # AuthProvider/useAuth: session state, signIn/signUp/signOut
-  lib/api.ts                    # All DB/storage queries + processMyMemories() Edge Function invoke
-  types/index.ts                # Memory, Category, Tag, UserPreferences types — source of truth for the data model
+  lib/api.ts                    # All DB/storage queries + processMyMemories() invoke; categoryIcon()/primaryCategory() helpers
+  types/index.ts                # Memory, StructuredData union (RecipeData|ArticleData|...), CATEGORIES — source of truth for the data model
 supabase/
-  migrations/                   # 3 SQL migrations: initial schema, storage+RLS hardening, revoke definer execute
+  migrations/                   # 4 SQL migrations: initial schema, storage+RLS hardening, revoke definer execute, structured_extraction
+  functions/_shared/extract.ts  # Shared extraction engine: typed prompt, URL harvesting, spark scoring (used by BOTH functions)
   functions/analyze-memory/     # Deno Edge Function: service-role + x-cron-secret (production cron path)
   functions/process-my-memories/ # Deno Edge Function: user-JWT scoped; invoked by the app after each capture
 docs/                           # deployment-guide, setup-guide, DEPLOYMENT, qa-certification
@@ -35,7 +37,9 @@ docs/                           # deployment-guide, setup-guide, DEPLOYMENT, qa-
 - **Env var split**: client code may only read `EXPO_PUBLIC_*` vars (e.g. `EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_ANON_KEY`). The anon key is public + RLS-gated and safe to ship. **`OPENAI_API_KEY` and `CRON_SECRET` are server-only** — set via `supabase secrets set ...`, never in `.env` or client code.
 - **Two Edge Function auth models**: `analyze-memory` runs with the service role, gated by a constant-time `x-cron-secret` check against `CRON_SECRET`, `verify_jwt=false` (production cron path — don't make it publicly callable). `process-my-memories` is `verify_jwt=true` and builds an RLS-scoped client from the caller's `Authorization` JWT, so it only ever touches the caller's own rows; it needs no `CRON_SECRET`/service-role key, only `OPENAI_API_KEY`. The app calls it via `supabase.functions.invoke('process-my-memories')`.
 - **Row claiming**: both functions atomically flip `pending → processing` per row so concurrent workers don't double-process. Preserve that pattern if you touch the job loop.
-- **Types first**: `src/types/index.ts` mirrors the DB schema. If you change a migration, update the types (and vice versa) in the same change.
+- **One extraction engine**: both Edge Functions delegate to `supabase/functions/_shared/extract.ts` (`extractMemory()`). Change the prompt or extraction logic THERE, not in either `index.ts`, so the cron path and the app path never drift. The functions only own row-claiming + writeback.
+- **Structured columns + back-compat**: `extractMemory()` returns `{ ai_metadata, category, structured_data, extracted_links, spark_score }` and both functions persist all of them. `ai_metadata` (summary/suggested_categories/suggested_tags) is kept populated for older clients — don't drop it. `structured_data.kind` is the discriminant the UI switches on; `spark_score` is non-null only for `Ideas`.
+- **Types first**: `src/types/index.ts` mirrors the DB schema and the extraction output. If you add a category, update `CATEGORIES`, the `StructuredData` union, the prompt schema in `extract.ts`, and the `categoryIcon` map together.
 - **Don't commit secrets**: `.env` is gitignored. Verify before every commit.
 
 ## Commands

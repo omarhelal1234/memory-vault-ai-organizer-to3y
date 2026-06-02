@@ -9,7 +9,8 @@ import {
   Linking,
   TouchableOpacity,
 } from 'react-native';
-import { getMemory, getSignedUrl } from '../lib/api';
+import { getMemory, getSignedUrl, categoryIcon } from '../lib/api';
+import { StructuredCard, ExtractedLinks } from '../components/StructuredCard';
 import type { Memory } from '../types';
 
 const STATUS_LABEL: Record<string, string> = {
@@ -65,18 +66,30 @@ const MemoryDetailScreen = ({ route }: any) => {
 
   const meta = memory.ai_metadata;
   const tags = meta?.suggested_tags ?? [];
-  const categories = meta?.suggested_categories ?? [];
+  const category = memory.category ?? meta?.suggested_categories?.[0] ?? null;
+  const hasStructured = !!memory.structured_data?.kind;
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Text style={styles.title}>{memory.title || meta?.summary || 'Memory'}</Text>
-      <Text style={styles.status}>
-        {STATUS_LABEL[memory.processing_status] ?? memory.processing_status} • {memory.type}
-      </Text>
+      <View style={styles.header}>
+        <Text style={styles.headerIcon}>{categoryIcon(category)}</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.title}>{memory.title || meta?.summary || 'Memory'}</Text>
+          <Text style={styles.status}>
+            {category ? `${category} • ` : ''}
+            {STATUS_LABEL[memory.processing_status] ?? memory.processing_status}
+          </Text>
+        </View>
+      </View>
 
       {imageUrl ? (
         <Image source={{ uri: imageUrl }} style={styles.image} resizeMode="cover" />
       ) : null}
+
+      {/* The rich, category-specific extraction is the star of the screen. */}
+      <StructuredCard data={memory.structured_data} sparkScore={memory.spark_score} />
+
+      <ExtractedLinks links={memory.extracted_links} />
 
       {memory.url ? (
         <TouchableOpacity onPress={() => Linking.openURL(memory.url!)}>
@@ -91,7 +104,8 @@ const MemoryDetailScreen = ({ route }: any) => {
         </View>
       ) : null}
 
-      {meta?.summary ? (
+      {/* Fall back to the plain summary only when there's no structured card. */}
+      {!hasStructured && meta?.summary ? (
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>AI Summary</Text>
           <Text style={styles.body}>{meta.summary}</Text>
@@ -102,19 +116,6 @@ const MemoryDetailScreen = ({ route }: any) => {
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>Transcript</Text>
           <Text style={styles.body}>{(meta as any).transcript}</Text>
-        </View>
-      ) : null}
-
-      {categories.length > 0 ? (
-        <View style={styles.section}>
-          <Text style={styles.sectionLabel}>Categories</Text>
-          <View style={styles.chips}>
-            {categories.map((c) => (
-              <View key={c} style={[styles.chip, styles.chipCategory]}>
-                <Text style={styles.chipCategoryText}>{c}</Text>
-              </View>
-            ))}
-          </View>
         </View>
       ) : null}
 
@@ -144,8 +145,10 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F8F9FA' },
   content: { padding: 20 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#F8F9FA' },
+  header: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 16, gap: 12 },
+  headerIcon: { fontSize: 34, lineHeight: 38 },
   title: { fontSize: 24, fontWeight: 'bold', color: '#212529', marginBottom: 4 },
-  status: { fontSize: 13, color: '#6C757D', marginBottom: 16, textTransform: 'capitalize' },
+  status: { fontSize: 13, color: '#6C757D' },
   image: { width: '100%', height: 240, borderRadius: 12, marginBottom: 16, backgroundColor: '#E9ECEF' },
   link: { color: '#6366F1', fontSize: 15, marginBottom: 16, textDecorationLine: 'underline' },
   section: { marginBottom: 18 },
@@ -154,8 +157,6 @@ const styles = StyleSheet.create({
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: { backgroundColor: '#E9ECEF', borderRadius: 16, paddingHorizontal: 12, paddingVertical: 6 },
   chipText: { fontSize: 13, color: '#495057' },
-  chipCategory: { backgroundColor: '#EEF2FF' },
-  chipCategoryText: { fontSize: 13, color: '#6366F1', fontWeight: '600' },
   hint: { color: '#ADB5BD', fontSize: 13, textAlign: 'center', marginTop: 8 },
   error: { color: '#DC2626', fontSize: 15, textAlign: 'center', padding: 20 },
 });
